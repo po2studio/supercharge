@@ -4,6 +4,45 @@ A small skill bundle for building software with strong LLM agents on [oh-my-pi (
 
 Made by [Saankofi](https://saankofi.com) and [PO2 Academy](https://www.po2academy.com).
 
+## Philosophy
+
+**Guide how the agent works, not how it does the work.** The skills set direction, boundaries and a definition of done, and leave the technique to the model. The bundle therefore assumes a strong model; weaker models need a more prescriptive process than this one.
+
+### Less is more
+
+The bundle is small on purpose: five skills, a few short docs, one config block. Every line in a skill should change behaviour; a line that changes nothing when deleted gets deleted. Why:
+
+- **Strong models already know the craft.** They can write a test, shape a module and debug a failure. Spelling that out adds nothing, and a fixed recipe overrides judgement that is often better than the recipe.
+- **Every line costs attention.** Skill text is loaded on every run and competes with the task. The more a skill says, the less weight each line gets, so the lines that matter get lost among the ones that don't.
+- **Process ages; direction doesn't.** Step-by-step instructions written around one model's weaknesses become dead weight, or get in the way, with the next model. Goals, boundaries and a definition of done stay true.
+- **You can read all of it.** The whole bundle reads in one sitting, so you know what the agent was told and can see why it did what it did.
+
+The same goes for what the bundle produces. It takes the lightest route that's safe (a one-line fix is just done; only bigger work gets a feature doc), keeps a few short docs rather than a wiki, deletes acceptance tests once they pass, and keeps the test suite fast. Less to maintain, less to drift out of date, less for the next session to read.
+
+### Good engineering by default
+
+Few instructions doesn't mean low standards. Every slice meets the bar a careful senior engineer sets for their own work:
+
+- **Tests first.** One acceptance test per criterion, seen failing, then the inside test-driven until it passes. What stays is the unit tests and one happy-path end-to-end test per core flow, through what users use.
+- **Run it for real.** Green tests aren't done: the agent runs the thing end to end, in the browser for a UI.
+- **One builder, one independent reviewer.** A different model reviews the diff against the acceptance criteria before the PR, so the builder's blind spots aren't the reviewer's.
+- **Small changes, green CI.** Each slice is its own reviewable change, merged only with CI passing, and CI kept within a time budget.
+- **Build for what exists.** No compatibility layers for data, users or releases that don't exist yet. Every external service sits behind an interface with a fake, so everything runs offline.
+- **Rigour scales with risk.** More edge-case tests and a stricter review where a mistake costs more, not everywhere.
+- **Decisions written down.** A decision ledger in each PR, ADRs for what's hard to reverse, and the docs updated as part of done.
+
+### Principles
+
+These run through every skill:
+
+1. **Docs are the current truth.** A few short docs say why and what; code and tests show how. Updating the docs is part of done.
+2. **Ask about the business, decide the technical.** Business rules (what gets recorded, money, who can do what, what users see) are never guessed silently. Technical choices are the agent's, recorded as it goes. Architecture and commitments outside the codebase (third parties, cost, data leaving the system, licenses) are proposed as ADRs for the human to accept. Questions come in one batch, each with a default, so `go` answers them all.
+3. **What's written is binding.** Anything the human wrote or approved is a requirement. Fill the gaps; flag conflicts rather than silently "improving" things.
+4. **Vertical slices, sized by what they deliver.** Each slice works end to end and has acceptance criteria. The plan marks which slices can be built together, and those are built in parallel; rules they share are settled in the feature doc first, so each slice doesn't invent its own.
+5. **Stop only where a human is needed.** Run every other step. At a stop, say exactly what to do and what happens after, so nothing has to be remembered.
+
+## How it works
+
 ```mermaid
 flowchart TB
     Y["You: requests"] --> P["plan-feature, one session per request<br>one batch of questions, feature doc, issues"]
@@ -26,19 +65,6 @@ flowchart TB
 ```
 
 Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per feature or ticket, one subagent per slice, each in its own worktree; every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions at the start and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp sessions side by side, started with the issue URLs.
-
-## Philosophy
-
-**Guide how the agent works, not how it does the work.** The skills set direction, boundaries and a definition of done, and leave the technique to the model. Less is more: every line in a skill should change behaviour. The bundle therefore assumes a strong model; weaker models need a more prescriptive process than this one.
-
-Principles that run through every skill:
-
-1. **Docs are the current truth.** A few short docs say why and what; code and tests show how. Updating the docs is part of done.
-2. **Ask about the business, decide the technical.** Business rules (what gets recorded, money, who can do what, what users see) are never guessed silently. Technical choices are the agent's, recorded as it goes. Architecture and commitments outside the codebase (third parties, cost, data leaving the system, licenses) are proposed as ADRs for the human to accept. Questions come in one batch, each with a default, so `go` answers them all.
-3. **What's written is binding.** Anything the human wrote or approved is a requirement. Fill the gaps; flag conflicts rather than silently "improving" things.
-4. **Vertical slices, sized by what they deliver.** Each slice works end to end and has acceptance criteria. The plan marks which slices can be built together, and those are built in parallel; rules they share are settled in the feature doc first, so each slice doesn't invent its own.
-5. **One builder, one independent reviewer.** Acceptance tests first, deleted once green; a real end-to-end check; and a review by a different model before the PR. What stays is the unit tests and one happy-path end-to-end test per core flow, through what users use, so the suite stays fast.
-6. **Stop only where a human is needed.** Run every other step. At a stop, say exactly what to do and what happens after, so nothing has to be remembered.
 
 ## Install
 
