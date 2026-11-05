@@ -11,7 +11,7 @@ Only write docs: don't plan or build. When you're done, say what comes next (usu
 
 ## The docs
 
-`AGENTS.md` stays at the repo root. The others live in the folder set by `docs` in the config block; the paths below assume the default, `docs/`. When the block is first added, check whether `docs/` already has another job, such as a published docs site (mkdocs, Docusaurus, GitHub Pages). If it does, suggest another folder such as `docs/supercharge` and ask. If the docs aren't where `docs` says, move them there and fix the links.
+`AGENTS.md` stays at the repo root. The others live in the folder set by `docs` in the config block; the paths below assume the default, `docs/`. When `docs` isn't set yet, check whether `docs/` already has another job, such as a published docs site (mkdocs, Docusaurus, GitHub Pages); if it does, offer another folder such as `docs/supercharge` as the default. If the docs aren't where `docs` says, move them there and fix the links.
 
 - `AGENTS.md`: the entry point. How to run, test, lint and format; conventions that aren't obvious from the code; the `## Supercharge` config block; links to the docs below. Keep it short.
 - `docs/BUSINESS.md`, optional: the business this lives in, who uses it and why, the domain rules that matter. Leave it out if there's no business context; its absence is information too.
@@ -32,10 +32,10 @@ Only write docs: don't plan or build. When you're done, say what comes next (usu
 
 ## Config block (in AGENTS.md)
 
-Add it if it's missing, with these defaults. If it's under the bundle's old name, `## Sprengikraftur`, rename the heading to `## Supercharge`. Changing `risk` or `approve` is the human's call: suggest it, don't set it. Set `docs` as above.
+If it's under the bundle's old name, `## Sprengikraftur`, rename the heading to `## Supercharge`. If the block or any key below is missing, ask for every missing key in your one batch of questions, each with its default and one line on what it does, and write the answers; `go` writes the defaults. Don't ask about keys already set.
 
 ```yaml
-risk: medium                 # low | medium | high
+risk: medium                 # low | medium | high: how costly a mistake would be
 approve: [merge]             # spec | plan | slice | merge: wait for the human at these points
 ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs

@@ -76,7 +76,7 @@ npx skills add po2studio/supercharge -g -a pi
 
 ## Config
 
-A YAML block in a `## Supercharge` section of the project's `AGENTS.md` (the `living-docs` skill adds it):
+A YAML block in a `## Supercharge` section of the project's `AGENTS.md`. `living-docs` asks for each key that isn't set yet, with its default, and writes the block:
 
 ```yaml
 risk: medium                 # low | medium | high; a feature doc may override this, with a reason
@@ -121,15 +121,15 @@ How long CI may take. When it takes longer, `build-slice` opens an issue to spee
 
 ### `docs`
 
-Where the docs, ADRs and feature docs live; every `docs/` path in the skills and in this README means this folder. Leave it as `docs` unless `docs/` already has another job, such as a published docs site; then use something like `docs/supercharge`. `living-docs` checks for this when it first adds the config block, and asks. `AGENTS.md` always stays at the repo root. To move the docs later, change `docs` and run `/living-docs`; it moves them and fixes the links.
+Where the docs, ADRs and feature docs live; every `docs/` path in the skills and in this README means this folder. Leave it as `docs` unless `docs/` already has another job, such as a published docs site; then use something like `docs/supercharge`. `living-docs` checks for this when it asks for `docs`, and offers that as the default. `AGENTS.md` always stays at the repo root. To move the docs later, change `docs` and run `/living-docs`; it moves them and fixes the links.
 
 ## Usage
 
 ### Setup (once per project)
 
 1. **Install** the skills and **set the model roles** (below).
-2. In omp, in the project's directory, run `/living-docs`, adding what you know: what it's for, who uses it, the stack. It reads any existing code and asks one batch of questions.
-3. **Read the docs it writes** and fix anything wrong; what you write there is binding. Set `risk` and `approve` in `AGENTS.md` if the defaults don't fit.
+2. In omp, in the project's directory, run `/living-docs`, adding what you know: what it's for, who uses it, the stack. It reads any existing code and asks one batch of questions, including every [config](#config) key that isn't set yet, each with its default; `go` accepts them all.
+3. **Read the docs it writes** and fix anything wrong; what you write there is binding.
 
 ### Daily use
 
