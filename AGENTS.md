@@ -1,6 +1,10 @@
 # AGENTS.md
 
-Supercharge is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `README.md` says what the bundle does and how to use it; `runs/` holds write-ups of test runs.
+Supercharge is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `README.md` is the user-facing doc; `runs/` holds write-ups of real runs.
+
+- [docs/PRODUCT.md](docs/PRODUCT.md): what the bundle does, its core flows and rules
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it's built and distributed
+- `docs/features/`: feature docs; `docs/adr/`: decisions
 
 ## Checks
 
@@ -8,13 +12,16 @@ Supercharge is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `READ
 
 ## Conventions
 
-- No `docs/` (owner's decision): the README is the product doc, and a feature's issue is its feature doc. So no feature docs or ADRs either: `plan-feature` triages everything here as `direct` or a `ticket`.
 - Every line in a skill should change behaviour. Keep additions short and in the skills' existing voice: guide how the agent works, not how it does the work.
-- No smoke run for skill changes (owner's decision, 2026-10-29): skill text has no runtime. Verification is the independent review of the diff against the acceptance criteria; the next real run in `runs/` confirms the behaviour.
+- The README describes the skills' behaviour in detail (the `approve` table, Usage): a skill change that alters what the human does or sees updates it too.
+- No smoke run and no end-to-end test for skill changes (owner's decision, 2026-10-29): skill text has no runtime. Verification is the independent review of the diff against the acceptance criteria; the next real run confirms the behaviour.
+- A real run gets a write-up in `runs/YYYY-MM-DD-slug.md`: setup, result, what went wrong, changes made afterwards.
 
 ## Supercharge
 
 ```yaml
 risk: medium                 # low | medium | high
 approve: [merge]             # spec | plan | slice | merge: wait for the human at these points
+ci_budget: 5m                # how long CI may take
+docs: docs                   # folder for the docs, ADRs and feature docs
 ```
