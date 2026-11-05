@@ -104,7 +104,7 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 | `spec` | After the feature doc's deliverables and acceptance criteria, before slicing | Check *what* gets built. Reply `go` or say what to change | It plans the slices |
 | `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It builds every slice |
 | `slice` | After each slice, or each batch built together, is built, reviewed and merged into the feature branch | Try it: the stop says how to run it and what to check. Reply `go` or report a problem | It fixes the problem, or starts the next slice |
-| `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches. The feature is done |
+| `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches. In an ADE such as Orca, it deletes only the remote branches and leaves the worktrees and their local branches for you to remove there. The feature is done |
 
 - **`[merge]` (default):** you only see the finished feature.
 - **`[plan, merge]`:** also catches wrong guesses about the product before any code is written. Use it with models that don't ask questions (see [run 4](runs/2026-10-14-receipt-scanner-cheap-models.md)).
@@ -182,15 +182,15 @@ modelRoles:
 
 Without `task`, builders run on `default`; without `smol`, so do the small jobs, at the planning model's price. Keep `task` and `slow` different. On a subscription, choose by quota rather than price: a cheaper builder still saves most of it, because building uses most of the tokens.
 
-Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026):
+Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed.
 
 | Model | In / out | Plan | Build | Review |
 |---|---|---|---|---|
-| `anthropic/claude-fable-5.1` | $10 / $50 | ? | – | – |
-| `anthropic/claude-opus-5.5` | $4 / $20 | ✓ | ✓ | ? |
+| `anthropic/claude-fable-5.1` | $10 / $50 | ✓ | ✓ | ✓ |
+| `anthropic/claude-opus-5.5` | $4 / $20 | ✓ | ✓ | ✓ |
 | `anthropic/claude-sonnet-5.5` | $2 / $10 | ? | ? | ? |
-| `openai/gpt-6-astra` | $10 / $50 | ? | – | – |
-| `openai/gpt-6.1-sol` | $2 / $10 | ? | ? | ✓ |
+| `openai/gpt-6-astra` | $10 / $50 | ✓ | ✓ | ✓ |
+| `openai/gpt-6.1-sol` | $2 / $10 | ✓ | ✓ | ✓ |
 | `z-ai/glm-5.3` | $0.07 / $1.40 | ✗ | ✓ | ? |
 | `moonshotai/kimi-k3.1-pro` | $2 / $10 | ? | ? | ? |
 | `moonshotai/kimi-k3` | $0.24 / $10.80 | ✗ | ? | ✓ |
@@ -200,6 +200,10 @@ Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not w
 Proven so far: **Opus plans, GLM 5.3 builds, GPT-6.1 Sol or Kimi K3 reviews**, for about $6 for a small MVP. On a real 5-day project with Opus building, building was 70% of the cost. Cheap models plan badly: they fill business gaps with silent defaults and state unchecked facts. Kimi K2.7 Code couldn't drive the bundle at all ([run 4](runs/2026-10-14-receipt-scanner-cheap-models.md)). The smallest tiers (Haiku, GPT Luna, the Flash models) are untested and probably too small to build; they suit `smol`.
 
 Ideas borrowed from OpenSpec, BMAD, Matt Pocock's skills, Compound Engineering, Spec Kit, Superpowers and cc-sdd.
+
+## Commercial support
+
+Using Supercharge at your company? We offer commercial support, extra tooling and managed spending for teams. Email us at [info@po2studio.com](mailto:info@po2studio.com).
 
 ## License
 
