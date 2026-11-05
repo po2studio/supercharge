@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Sprengikraftur is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `README.md` says what the bundle does and how to use it; `runs/` holds write-ups of test runs.
+Supercharge is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `README.md` says what the bundle does and how to use it; `runs/` holds write-ups of test runs.
 
 ## Checks
 
@@ -12,7 +12,7 @@ Sprengikraftur is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `R
 - Every line in a skill should change behaviour. Keep additions short and in the skills' existing voice: guide how the agent works, not how it does the work.
 - No smoke run for skill changes (owner's decision, 2026-10-29): skill text has no runtime. Verification is the independent review of the diff against the acceptance criteria; the next real run in `runs/` confirms the behaviour.
 
-## Sprengikraftur
+## Supercharge
 
 ```yaml
 risk: medium                 # low | medium | high

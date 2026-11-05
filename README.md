@@ -1,4 +1,4 @@
-# Sprengikraftur
+# Supercharge
 
 A small skill bundle for building software with strong LLM agents on [oh-my-pi (omp)](https://github.com/can1357/oh-my-pi).
 
@@ -69,14 +69,14 @@ Each slice: acceptance tests first, built, run for real, reviewed by a different
 ## Install
 
 ```sh
-npx skills add saankofi/sprengikraftur -g -a pi
+npx skills add po2studio/supercharge -g -a pi
 ```
 
 `pi` is omp's upstream, so this installs into `~/.agents/skills`, which omp reads. Leave out `-g` to install into one project's `.agents/skills` instead. Check with `omp read skill://plan-feature`; update with `npx skills update -g`.
 
 ## Config
 
-A YAML block in a `## Sprengikraftur` section of the project's `AGENTS.md` (the `living-docs` skill adds it):
+A YAML block in a `## Supercharge` section of the project's `AGENTS.md` (the `living-docs` skill adds it):
 
 ```yaml
 risk: medium                 # low | medium | high; a feature doc may override this, with a reason
@@ -121,7 +121,7 @@ How long CI may take. When it takes longer, `build-slice` opens an issue to spee
 
 ### `docs`
 
-Where the docs, ADRs and feature docs live; every `docs/` path in the skills and in this README means this folder. Leave it as `docs` unless `docs/` already has another job, such as a published docs site; then use something like `docs/sprengikraftur`. `living-docs` checks for this when it first adds the config block, and asks. `AGENTS.md` always stays at the repo root. To move the docs later, change `docs` and run `/living-docs`; it moves them and fixes the links.
+Where the docs, ADRs and feature docs live; every `docs/` path in the skills and in this README means this folder. Leave it as `docs` unless `docs/` already has another job, such as a published docs site; then use something like `docs/supercharge`. `living-docs` checks for this when it first adds the config block, and asks. `AGENTS.md` always stays at the repo root. To move the docs later, change `docs` and run `/living-docs`; it moves them and fixes the links.
 
 ## Usage
 
