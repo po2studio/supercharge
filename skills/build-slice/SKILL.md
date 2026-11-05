@@ -32,7 +32,7 @@ Build only this slice. Anything else you notice goes in the report.
 - Build for what exists. Don't build compatibility for data, users or releases that don't exist yet.
 - If CI exceeds `ci_budget`, open an issue to speed it up, unless one is already open.
 - If the same failure or review finding survives three fixes, stop and say so.
-- Merge into a feature branch yourself. A PR into `main` waits for the human's approval if `approve` includes `merge`; once they approve, check CI is green, merge it yourself, and clean up the branch. At the stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
+- Merge into a feature branch yourself. A PR into `main` waits for the human's approval if `approve` includes `merge`; once they approve, check CI is green, merge it yourself, and clean up the branch. In an ADE such as Orca, don't remove its worktrees: that breaks the ADE's sessions, so the human removes them there. At the stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
 - Unless `drive-feature` runs you, if this slice is its feature's last open one (the feature issue has no other open sub-issues), end your stop and report with: start feature issue #N in Orca (or run `/drive-feature <its URL>`) to finish. `drive-feature` skips the done slices and only does the finish.
 - Don't work around security controls (commit signing, auth, hooks). Stop and say so.
 - If an omp feature named here isn't available, use an equivalent. If there isn't one, stop and say so.
