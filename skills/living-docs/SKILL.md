@@ -11,9 +11,9 @@ Only write docs: don't plan or build. When you're done, say what comes next (usu
 
 ## The docs
 
-`AGENTS.md` stays at the repo root. The others live in the folder set by `docs` in the config block; the paths below assume the default, `docs/`. When the block is first added, check whether `docs/` already has another job, such as a published docs site (mkdocs, Docusaurus, GitHub Pages). If it does, suggest another folder such as `docs/sprengikraftur` and ask. If the docs aren't where `docs` says, move them there and fix the links.
+`AGENTS.md` stays at the repo root. The others live in the folder set by `docs` in the config block; the paths below assume the default, `docs/`. When the block is first added, check whether `docs/` already has another job, such as a published docs site (mkdocs, Docusaurus, GitHub Pages). If it does, suggest another folder such as `docs/supercharge` and ask. If the docs aren't where `docs` says, move them there and fix the links.
 
-- `AGENTS.md`: the entry point. How to run, test, lint and format; conventions that aren't obvious from the code; the `## Sprengikraftur` config block; links to the docs below. Keep it short.
+- `AGENTS.md`: the entry point. How to run, test, lint and format; conventions that aren't obvious from the code; the `## Supercharge` config block; links to the docs below. Keep it short.
 - `docs/BUSINESS.md`, optional: the business this lives in, who uses it and why, the domain rules that matter. Leave it out if there's no business context; its absence is information too.
 - `docs/PRODUCT.md`: what the product does **today**, its users, core flows, domain rules. What users see, not the numbers and mechanics behind it.
 - `docs/ARCHITECTURE.md`: how it's built **today**: components, data, external services, key constraints. Say which external services have a fake and whether it runs offline on them (`build-slice` requires both); if not, say so.
@@ -32,7 +32,7 @@ Only write docs: don't plan or build. When you're done, say what comes next (usu
 
 ## Config block (in AGENTS.md)
 
-Add it if it's missing, with these defaults. Changing `risk` or `approve` is the human's call: suggest it, don't set it. Set `docs` as above.
+Add it if it's missing, with these defaults. If it's under the bundle's old name, `## Sprengikraftur`, rename the heading to `## Supercharge`. Changing `risk` or `approve` is the human's call: suggest it, don't set it. Set `docs` as above.
 
 ```yaml
 risk: medium                 # low | medium | high
