@@ -8,7 +8,7 @@ Developers and owners building software with strong LLM agents in omp, often sta
 
 ## Core flows
 
-1. **Set up a project:** install the skills globally, set omp's model roles, and run `/living-docs` in the project. It asks one batch of questions and writes `AGENTS.md` (with the config block) and the docs. Run it again after changes made outside the bundle.
+1. **Set up a project:** install the skills globally, set omp's model roles, and run `/living-docs` in the project. It asks one batch of questions, including any config key not yet set, each with its default, and writes `AGENTS.md` (with the config block) and the docs. Run it again after changes made outside the bundle.
 2. **Plan a request:** ask for something, or run `/plan-feature <request>`. It triages the request as direct (done now), a ticket (one issue) or a feature (a feature doc, a feature issue, and the slices as sub-issues), asks one batch of business questions with defaults, and stops where `approve` says. A feature doc reaches `main` on its own PR.
 3. **Build a feature:** start the feature issue, or run `/drive-feature <issue URL or doc>`. `build-slice` subagents build the slices, in parallel where the doc allows. The finish refreshes the docs, sets the status to `shipped`, and opens one PR into `main`.
 4. **Build a slice or ticket:** start its issue, or run `/build-slice <issue URL>`: tests first, run for real, reviewed by a different model, then a PR with green CI that closes the issue.
