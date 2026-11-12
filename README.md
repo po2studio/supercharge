@@ -26,7 +26,7 @@ Few instructions doesn't mean low standards. Every slice meets the bar a careful
 - **Tests first.** One acceptance test per criterion, seen failing, then the inside test-driven until it passes. What stays is the unit tests and one happy-path end-to-end test per core flow, through what users use; when there's no harness yet, the plan names setting it up in the first slice.
 - **Run it for real.** Green tests aren't done: the agent runs the thing end to end, in the browser for a UI.
 - **One builder, one independent reviewer.** A different model reviews the diff against the acceptance criteria before the PR, so the builder's blind spots aren't the reviewer's.
-- **Small changes, green CI.** Each slice is its own reviewable change, merged only with CI passing.
+- **Small changes, green CI.** Each slice is its own reviewable change, merged only with CI passing, and CI kept within a time budget.
 - **Build for what exists.** No compatibility layers for data, users or releases that don't exist yet. Every external service sits behind an interface with a fake, so everything runs offline.
 - **Rigour scales with risk.** More edge-case tests and a stricter review where a mistake costs more, not everywhere.
 - **Decisions written down.** A decision ledger in each PR, ADRs for what's hard to reverse, and the docs updated as part of done.
@@ -93,6 +93,7 @@ A YAML block in a `## Supercharge` section of the project's `AGENTS.md`. `living
 ```yaml
 risk: medium                 # low | medium | high; a feature doc may override this, with a reason
 approve: [plan, merge]       # spec | plan | slice | merge: wait for the human at these points
+ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs
 ```
 
@@ -124,7 +125,11 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 
 Whatever `approve` says, planning a feature ends its session with a handoff: start the feature issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. You never merge anything yourself: approving is replying `go` in the session.
 
-Small changes skip the feature machinery: a one-line fix is done directly, with no issue or independent review, and a single-slice ticket is built in a builder subagent and reviewed on a different model. Each gets its own PR into `main`, which waits for your `go` if `merge` is set.
+Small changes skip the feature machinery. A direct change skips only the issue and the planning stop: a builder subagent builds it, a different model reviews it, and the docs are kept true, as for a ticket, which also gets its issue. Each gets its own PR into `main`, which waits for your `go` if `merge` is set.
+
+### `ci_budget`
+
+How long CI may take. When it takes longer, `build-slice` opens an issue to speed it up, if there isn't one open already.
 
 ### `docs`
 
@@ -141,7 +146,7 @@ Where the docs, ADRs and feature docs live; every `docs/` path in the skills and
 1. **Start a new session for each request.** The docs carry the context, so a fresh session loses nothing, and it's cheaper and sharper than one that has run for days.
 2. **Run `/supercharge` with what you want, in omp or Claude Code:** an idea, a bug, a change or a feature, from one line to a full spec. For example, `/supercharge the login page fails on an empty email`, or `/supercharge let's explore pricing before we build anything`. In a project that isn't set up yet, it first runs `living-docs`: it reads any existing code, writes `AGENTS.md` (with the [config](#config) block) and the docs, and stops once for you to read them and answer its questions, including every config key that isn't set yet, each with its default; `go` accepts them all. Fix anything wrong in the docs; what you write there is binding. Then it takes your request:
    - **Direction open, or you ask to explore:** it brainstorms with you, back and forth, and writes nothing until you settle the direction. "Not now" ends it with nothing written.
-   - **New work:** small things are done directly; a ticket gets one issue and is built in a builder subagent, reviewed on a different model; bigger work gets a feature doc, plus a GitHub feature issue with the slices as its sub-issues. The doc reaches `main` on its own PR, which the agent merges without waiting for `merge`, so a session started from any of the issues can read it.
+   - **New work:** small things are done directly (no issue, no planning stop, but built in a builder subagent and reviewed on a different model); a ticket gets one issue and is built the same way; bigger work gets a feature doc, plus a GitHub feature issue with the slices as its sub-issues. The doc reaches `main` on its own PR, which the agent merges without waiting for `merge`, so a session started from any of the issues can read it.
    - **Planned work** (an issue, a feature doc, "build feature 3, two at a time"): it hands it to `drive-feature` or `build-slice`.
    - **Drifted docs:** it hands them to `living-docs`.
 3. **Do what each stop says.** Answer its questions (`go` accepts the defaults), check the plan if `plan` is in `approve`, and approve the PR into `main` with `go`. The agent merges it, and the docs are already current. A feature ends the planning session: start its issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. When a request is finished, start a new session for the next one.
