@@ -3,9 +3,9 @@
 ## Components
 
 - **Skills:** `skills/<name>/SKILL.md`, Markdown with `name` (matching the folder) and `description` frontmatter. No code: each skill guides an omp session or subagent.
-  - `living-docs` writes `AGENTS.md` and `docs/`; `adr` writes `docs/adr/`; `plan-feature` writes `docs/features/` and GitHub issues.
+  - `living-docs` writes `AGENTS.md` and `docs/`; `adr` writes `docs/adr/`; `supercharge` is the entry point: it runs `living-docs` to set a project up, writes `docs/features/` and GitHub issues, and hands planned work to `drive-feature` or `build-slice`.
   - `drive-feature` runs `build-slice` per slice in `task` subagents, then `living-docs` at the finish. `build-slice` writes the code, tests and docs, and opens the PR.
-  - Skills share no code. They coordinate only through those files, the config block in `AGENTS.md`, and GitHub issues and PRs.
+  - Skills share no code. Apart from one skill starting another, they coordinate only through those files, the config block in `AGENTS.md`, and GitHub issues and PRs.
 - **`runs/`:** write-ups of real runs, the evidence behind the README's model table.
 - **`scripts/check.py`:** checks each skill's frontmatter and every relative link in the repo's Markdown. CI (`.github/workflows/check.yml`) runs it on PRs and on pushes to `main`.
 
