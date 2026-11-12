@@ -188,7 +188,7 @@ There are three jobs, and they need different things:
 
 - **Planning** (`supercharge`, `living-docs`): judgement about the business, such as which questions to ask, safe defaults, and checking facts. It uses few tokens, so use the strongest model you have.
 - **Building** (`build-slice`): good technical judgement. It uses most of the tokens, so this is where a cheaper model pays off.
-- **Reviewing** (omp's `reviewer` agent): an independent check. Always a different model from the builder, ideally from a different company. It's cheap.
+- **Reviewing** (omp's `reviewer` agent, or a fresh subagent in Claude Code): an independent check. Always a different model from the builder, ideally from a different company. It's cheap.
 
 Each job runs on an omp model role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`scout` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
 
