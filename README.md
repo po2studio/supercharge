@@ -64,7 +64,7 @@ flowchart TB
     PR2 & PR1 & PR3 -->|"you: go"| M["main"]
 ```
 
-Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per request, which builds a ticket itself; each feature gets a fresh session of its own, one subagent per slice, each in its own worktree. Every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions and check the plan at the start, and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several sessions side by side, started with the issue URLs.
+Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per request, which builds a ticket itself; each feature gets a fresh session of its own, one subagent per slice, each in its own worktree. Every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions and check the plan at the start, and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp or Claude Code sessions side by side, started with the issue URLs.
 
 ## Install
 
