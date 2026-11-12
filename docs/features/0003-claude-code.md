@@ -84,7 +84,7 @@ Medium (default). A wrong word in a skill loses a guarantee silently: a same-mod
 
 ## Slices
 1 ([#32](https://github.com/po2studio/supercharge/issues/32)) and 2 ([#33](https://github.com/po2studio/supercharge/issues/33)) together: they share only the README, in different sections. 3 ([#34](https://github.com/po2studio/supercharge/issues/34)) after 2.
-- [ ] [#32](https://github.com/po2studio/supercharge/issues/32): Install and plan in Claude Code
+- [x] [#32](https://github.com/po2studio/supercharge/issues/32): Install and plan in Claude Code
 - [x] [#33](https://github.com/po2studio/supercharge/issues/33): Build a ticket in Claude Code
 - [ ] [#34](https://github.com/po2studio/supercharge/issues/34): Drive a feature in Claude Code
 

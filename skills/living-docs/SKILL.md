@@ -14,6 +14,7 @@ Only write docs: don't plan or build. When you're done, say what comes next (usu
 `AGENTS.md` stays at the repo root. The others live in the folder set by `docs` in the config block; the paths below assume the default, `docs/`. When `docs` isn't set yet, check whether `docs/` already has another job, such as a published docs site (mkdocs, Docusaurus, GitHub Pages); if it does, offer another folder such as `docs/supercharge` as the default. If the docs aren't where `docs` says, move them there and fix the links.
 
 - `AGENTS.md`: the entry point. How to run, test, lint and format; conventions that aren't obvious from the code; the `## Supercharge` config block; links to the docs below. Keep it short.
+- `CLAUDE.md`: only if the project has one: make sure it imports `AGENTS.md` with a line `@AGENTS.md` (so Claude Code loads it), rather than copying the content. Don't create one otherwise.
 - `docs/BUSINESS.md`, optional: the business this lives in, who uses it and why, the domain rules that matter. Leave it out if there's no business context; its absence is information too.
 - `docs/PRODUCT.md`: what the product does **today**, its users, core flows, domain rules. What users see, not the numbers and mechanics behind it.
 - `docs/ARCHITECTURE.md`: how it's built **today**: components, data, external services, key constraints. Say which external services have a fake and whether it runs offline on them (`build-slice` requires both); if not, say so.
