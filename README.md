@@ -46,7 +46,7 @@ These run through every skill:
 ```mermaid
 flowchart TB
     Y["You: supercharge …, one session per request"] --> P["supercharge<br>sets the project up if needed, explores with you, one batch of questions, plan"]
-    P -->|"ticket, same session"| T["build-slice"]
+    P -->|"ticket, builder subagent"| T["build-slice"]
     P -->|"features: issues"| O["ADE such as Orca: the repo's issue list"]
     O --> F2["fresh session: feature 13<br>drive-feature"]
     O --> F1["fresh session: feature 12<br>drive-feature"]
@@ -113,7 +113,7 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 | Value | Stops | You | Then |
 |---|---|---|---|
 | `spec` | After the feature doc's deliverables and acceptance criteria, before slicing | Check *what* gets built. Reply `go` or say what to change | It plans the slices |
-| `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It creates the issues. A ticket is built in the same session; a feature is built once you start its issue in a fresh session |
+| `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It creates the issues. A ticket is built in a builder subagent, reviewed on a different model; a feature is built once you start its issue in a fresh session |
 | `slice` | After each slice, or each batch built together, is built, reviewed and merged into the feature branch | Try it: the stop says how to run it and what to check. Reply `go` or report a problem | It fixes the problem, or starts the next slice |
 | `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches and worktrees its agents created, never the one your session runs in. The feature is done |
 
@@ -124,7 +124,7 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 
 Whatever `approve` says, planning a feature ends its session with a handoff: start the feature issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. You never merge anything yourself: approving is replying `go` in the session.
 
-Small changes skip the feature machinery: a one-line fix is done directly, with no issue or independent review, and a single-slice ticket is built in the same session. Each gets its own PR into `main`, which waits for your `go` if `merge` is set.
+Small changes skip the feature machinery: a one-line fix is done directly, with no issue or independent review, and a single-slice ticket is built in a builder subagent and reviewed on a different model. Each gets its own PR into `main`, which waits for your `go` if `merge` is set.
 
 ### `docs`
 
@@ -141,7 +141,7 @@ Where the docs, ADRs and feature docs live; every `docs/` path in the skills and
 1. **Start a new session for each request.** The docs carry the context, so a fresh session loses nothing, and it's cheaper and sharper than one that has run for days.
 2. **Run `/supercharge` with what you want, in omp or Claude Code:** an idea, a bug, a change or a feature, from one line to a full spec. For example, `/supercharge the login page fails on an empty email`, or `/supercharge let's explore pricing before we build anything`. In a project that isn't set up yet, it first runs `living-docs`: it reads any existing code, writes `AGENTS.md` (with the [config](#config) block) and the docs, and stops once for you to read them and answer its questions, including every config key that isn't set yet, each with its default; `go` accepts them all. Fix anything wrong in the docs; what you write there is binding. Then it takes your request:
    - **Direction open, or you ask to explore:** it brainstorms with you, back and forth, and writes nothing until you settle the direction. "Not now" ends it with nothing written.
-   - **New work:** small things are done directly; a ticket gets one issue and is built in the same session; bigger work gets a feature doc, plus a GitHub feature issue with the slices as its sub-issues. The doc reaches `main` on its own PR, which the agent merges without waiting for `merge`, so a session started from any of the issues can read it.
+   - **New work:** small things are done directly; a ticket gets one issue and is built in a builder subagent, reviewed on a different model; bigger work gets a feature doc, plus a GitHub feature issue with the slices as its sub-issues. The doc reaches `main` on its own PR, which the agent merges without waiting for `merge`, so a session started from any of the issues can read it.
    - **Planned work** (an issue, a feature doc, "build feature 3, two at a time"): it hands it to `drive-feature` or `build-slice`.
    - **Drifted docs:** it hands them to `living-docs`.
 3. **Do what each stop says.** Answer its questions (`go` accepts the defaults), check the plan if `plan` is in `approve`, and approve the PR into `main` with `go`. The agent merges it, and the docs are already current. A feature ends the planning session: start its issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. When a request is finished, start a new session for the next one.
@@ -191,7 +191,7 @@ modelRoles:
 
 Without `task`, builders run on `default`; without `smol`, so do the small jobs, at the planning model's price. Keep `task` and `slow` different. On a subscription, choose by quota rather than price: a cheaper builder still saves most of it, because building uses most of the tokens.
 
-**In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket built in an Opus session is reviewed by Sonnet: the reviewer checks the diff against the criteria, it doesn't need to be the stronger model. The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
+**In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket is built on `sonnet` and reviewed by `opus`, whatever model the session runs on. The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
 
 Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed. Sonnet 5.5 builds in the owner's daily use (2026-11-12), without a write-up.
 
