@@ -86,7 +86,7 @@ Medium (default). A wrong word in a skill loses a guarantee silently: a same-mod
 1 ([#32](https://github.com/po2studio/supercharge/issues/32)) and 2 ([#33](https://github.com/po2studio/supercharge/issues/33)) together: they share only the README, in different sections. 3 ([#34](https://github.com/po2studio/supercharge/issues/34)) after 2.
 - [x] [#32](https://github.com/po2studio/supercharge/issues/32): Install and plan in Claude Code
 - [x] [#33](https://github.com/po2studio/supercharge/issues/33): Build a ticket in Claude Code
-- [ ] [#34](https://github.com/po2studio/supercharge/issues/34): Drive a feature in Claude Code
+- [x] [#34](https://github.com/po2studio/supercharge/issues/34): Drive a feature in Claude Code
 
 ## Notes for the builder
 - AGENTS.md: `risk: medium`, `approve: [plan, merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`.
