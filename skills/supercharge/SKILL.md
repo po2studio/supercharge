@@ -59,7 +59,7 @@ Describe what and why; leave the how to the builder.
 
 ## Issues
 
-Create issues with `gh` (omp's `github` tool can't create them). Each body starts with the command that builds it (edit the URL in once the issue exists), so a session started from the issue runs the right skill.
+Create issues with `gh` (omp's `github` tool can't create them; in Claude Code, `gh` is the GitHub tool). Each body starts with the command that builds it (edit the URL in once the issue exists), so a session started from the issue runs the right skill.
 - **Feature:** one issue labelled `feature`, `feature:NNNN` and `ready-for-agent`, starting `/drive-feature <its URL>`, then a short summary and a link to the feature doc. Don't copy the deliverables or acceptance criteria; the doc stays the truth.
 - **Slices:** each a sub-issue of it (`gh issue create --parent`), labelled `slice`, `feature:NNNN` and `ready-for-agent`, starting `/build-slice <its URL>`, then a link to the feature issue, its acceptance criteria, dependencies, the slices it can be built with, and what it touches. Orca doesn't show sub-issues or filter on them, so the `feature:NNNN` label and that link are how the human finds a feature's slices there.
 - **Ticket:** one issue labelled only `ready-for-agent`, starting `/build-slice <its URL>`, then its acceptance criteria.

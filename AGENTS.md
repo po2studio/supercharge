@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Supercharge is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `README.md` is the user-facing doc; `runs/` holds write-ups of real runs.
+Supercharge is a skill bundle for omp and Claude Code. The skills are `skills/*/SKILL.md`; `README.md` is the user-facing doc; `runs/` holds write-ups of real runs.
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): what the bundle does, its core flows and rules
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it's built and distributed
