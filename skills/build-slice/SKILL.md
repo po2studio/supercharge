@@ -9,6 +9,8 @@ Ship one slice so it's verifiably done and the docs still tell the truth.
 
 Build only this slice. Anything else you notice goes in the report.
 
+If you're the session, not a subagent, hand this slice to a fresh builder subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`), with the issue URL, and run this skill there. Relay its questions and `proposed` ADRs to the human and the answers back, relay its stop, and on `go` merge and clean up as below. The rest is for the builder; a subagent builds itself.
+
 `docs/` here means the folder set by `docs` in `AGENTS.md` (default `docs`).
 
 ## Done means

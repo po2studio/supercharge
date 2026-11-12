@@ -163,7 +163,7 @@ To build an existing plan:
   /drive-feature docs/features/0003-csv-export.md one slice at a time, I'll test each on my phone
   /drive-feature docs/features/0003-csv-export.md build only slice 2
   ```
-- **One slice or ticket per session** (for example, several sessions side by side, in omp or Claude Code): start its issue from Orca, or run `/build-slice <issue URL>`. With no feature branch, each gets its own PR into `main` that closes its issue, merged on your `go`. Pick slices the feature doc marks as buildable together. When the last slice of a feature merges, its stop tells you to start the feature issue from Orca: it skips the finished slices, does only the finish (docs, `living-docs`, status), and its PR closes the feature issue. After a big change made outside the bundle, run `/living-docs` to bring the docs back in line.
+- **One slice or ticket per session** (for example, several sessions side by side, in omp or Claude Code): start its issue from Orca, or run `/build-slice <issue URL>`. The session hands it to a builder subagent, reviewed on a different model, and relays its stop. With no feature branch, each gets its own PR into `main` that closes its issue, merged on your `go`. Pick slices the feature doc marks as buildable together. When the last slice of a feature merges, its stop tells you to start the feature issue from Orca: it skips the finished slices, does only the finish (docs, `living-docs`, status), and its PR closes the feature issue. After a big change made outside the bundle, run `/living-docs` to bring the docs back in line.
 
 ## Skills
 
@@ -183,7 +183,7 @@ Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`,
 There are three jobs, and they need different things:
 
 - **Planning** (`supercharge`, `living-docs`): judgement about the business, such as which questions to ask, safe defaults, and checking facts. It uses few tokens, so use the strongest model you have.
-- **Building** (`build-slice`): good technical judgement. It uses most of the tokens, so this is where a cheaper model pays off.
+- **Building** (`build-slice`): good technical judgement. It uses most of the tokens, so this is where a cheaper model pays off. A slice or ticket started from its issue is built in a builder subagent too, so the session's model doesn't build.
 - **Reviewing** (omp's `reviewer` agent, or a fresh subagent in Claude Code): an independent check. Always a different model from the builder, ideally from a different company. It's cheap.
 
 Each job runs on an omp model role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`scout` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
