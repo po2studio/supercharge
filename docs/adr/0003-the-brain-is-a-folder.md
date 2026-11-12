@@ -1,6 +1,6 @@
 # 0003: The brain is a folder; raw files are the truth
 
-Status: proposed
+Status: accepted
 
 ## Context
 

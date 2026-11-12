@@ -1,6 +1,6 @@
 # 0002: Local embeddings and one SQLite index
 
-Status: proposed
+Status: accepted
 
 ## Context
 

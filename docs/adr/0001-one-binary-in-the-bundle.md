@@ -1,6 +1,6 @@
 # 0001: One downloaded binary in a skill bundle
 
-Status: proposed
+Status: accepted
 
 ## Context
 
