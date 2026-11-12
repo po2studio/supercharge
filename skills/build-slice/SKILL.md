@@ -14,12 +14,12 @@ Build only this slice. Anything else you notice goes in the report.
 ## Done means
 
 - Acceptance tests came first: one per acceptance criterion, at the outermost level that shows it (the browser for a UI flow, the API for a backend rule), seen failing. The inside was then test-driven until they passed.
-- The real thing works end to end: run it, and use the browser for UI.
+- The real thing works end to end: run it, and for a UI use a browser: omp's `browser` tool, or in Claude Code a headless browser through the project's browser test tooling, never the human's own.
 - Unit tests written while test-driving stay; only the slice's acceptance tests are deleted once they pass (git keeps them).
 - The permanent end-to-end suite has one happy-path test per core flow in `docs/PRODUCT.md`, through the surface users use: the browser for a UI (an HTTP-only test doesn't count), the API or CLI otherwise. If this slice adds or changes a core flow, update that flow and its test, and flag it. With no end-to-end harness yet, the first slice that touches a core flow sets one up and records how to run it in `AGENTS.md`.
 - Every external service sits behind an interface with a fake, and the whole thing runs offline on the fakes.
-- An independent review passed: omp's `reviewer` agent (it runs on omp's `slow` role, a different model from the builder), given the acceptance criteria and the diff. Fix the findings, or record why not.
-- A PR is open (omp's `github` tool), with CI green. Before opening it, merge the target branch in and run the checks again: slices built in parallel edit the same docs. Fix failures and push until it passes. It targets the feature's branch (`feature/NNNN-*`) if one exists, otherwise `main`. Given an issue, the PR description says `Closes #N` for it; GitHub acts on that only for PRs into the default branch, so when you merge into a feature branch, close the issue with `gh issue close`. With no GitHub remote, use local branches and run the checks in `AGENTS.md` in place of CI.
+- An independent review passed: a fresh subagent, not a fork, on a different model from the builder, given only the acceptance criteria and the diff. In omp that's the `reviewer` agent on the `slow` role; in Claude Code `opus` for a `sonnet` builder, otherwise `sonnet`. With no such reviewer, stop and say so; never review on the builder's model. Fix the findings, or record why not.
+- A PR is open (omp's `github` tool; `gh` in Claude Code), with CI green. Before opening it, merge the target branch in and run the checks again: slices built in parallel edit the same docs. Fix failures and push until it passes. It targets the feature's branch (`feature/NNNN-*`) if one exists, otherwise `main`; your branch starts from that target, wherever your worktree started. Given an issue, the PR description says `Closes #N` for it; GitHub acts on that only for PRs into the default branch, so when you merge into a feature branch, close the issue with `gh issue close`. With no GitHub remote, use local branches and run the checks in `AGENTS.md` in place of CI.
 - The docs match reality, and stay short: `docs/PRODUCT.md` (what users see, not the numbers behind it) and `docs/ARCHITECTURE.md` updated, ADRs written for decisions that are hard to reverse, superseding any they contradict, and the slice ticked off in the feature doc.
 
 ## How to work
@@ -35,7 +35,7 @@ Build only this slice. Anything else you notice goes in the report.
 - Merge into a feature branch yourself, then delete the slice branch, remote and local. A PR into `main` waits for the human's approval if `approve` includes `merge`; once they approve, check CI is green, merge it yourself, and clean up the branch. Remove a worktree you added for this slice once you're done with it and anything in it is merged; keep one that isn't, and say where it is in the report. Clean up only this slice's own branches and worktrees, never leftovers from earlier work, and never anything holding uncommitted changes or unmerged commits. In an ADE such as Orca, leave the session's worktree and the branch checked out there: removing them breaks the ADE's sessions, so the human removes them there. At the stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
 - Unless `drive-feature` runs you, if this slice is its feature's last open one (the feature issue has no other open sub-issues), end your stop and report with: start feature issue #N in Orca (or run `/drive-feature <its URL>`) to finish. `drive-feature` skips the done slices and only does the finish.
 - Don't work around security controls (commit signing, auth, hooks). Stop and say so.
-- If an omp feature named here isn't available, use an equivalent. If there isn't one, stop and say so.
+- If a feature named here isn't available, use an equivalent, or stop and say so. No equivalent replaces "not a fork" or "a different model".
 
 ## Report
 

@@ -180,7 +180,7 @@ To build an existing plan:
 | `drive-feature` | Runs `build-slice` across a feature's slices, then reports once |
 
 Each skill works on its own; `supercharge` and `drive-feature` start the others, and otherwise they coordinate only through the files above and their GitHub issues.
-Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`, the `github` tool), plus `gh` for issues, which the `github` tool can't create. If one is missing, the skill uses an equivalent, or stops and says so.
+Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`, the `github` tool), plus `gh` for issues, which the `github` tool can't create; in Claude Code it uses subagents, a headless browser and `gh`. If one is missing, the skill uses an equivalent, or stops and says so. No equivalent replaces a fresh subagent (not a fork) or a reviewer on a different model.
 
 ## Models
 
@@ -201,6 +201,8 @@ modelRoles:
 ```
 
 Without `task`, builders run on `default`; without `smol`, so do the small jobs, at the planning model's price. Keep `task` and `slow` different. On a subscription, choose by quota rather than price: a cheaper builder still saves most of it, because building uses most of the tokens.
+
+**In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
 
 Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed.
 
