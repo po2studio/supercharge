@@ -79,7 +79,7 @@ Medium (default). A wrong word in a skill loses a guarantee silently: a same-mod
 - *Assumptions, not asked:*
   - Orca starts CC sessions from an issue the same way it starts omp sessions;
   - the README model table stays as it is: the models are the same, only the harness differs.
-- **Conflict to settle:** [0002](0002-second-brain.md) puts "agents other than omp" out of scope "as today". Once this ships, that reason no longer holds. Not changed here; the owner decides when 0002 is built.
+- **Conflict with [0002](0002-second-brain.md), settled:** 0002 put "agents other than omp" out of scope. The owner decided on 2026-11-12, before 0002 was built, that the brain works in Claude Code too.
 - **Overlap:** ticket [#30](https://github.com/po2studio/supercharge/issues/30) (rename `plan-feature` to `supercharge`) landed first, so slice 1 edited `skills/supercharge/`.
 
 ## Slices

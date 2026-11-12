@@ -20,7 +20,7 @@ Hard requirements (owner, 2026-11-03):
 - **`brain` binary** (Rust, in this repo under `brain/`, released for 5 platforms): converts any file to text, chunks it, embeds it on the CPU with a multilingual model compiled in, and keeps one SQLite index (full-text plus vectors). Commands: `index`, `search`, `check`, `stats`, `eval`, `bench`.
 - **`brain` skill**:
   - first-run setup: the brain's location, then the download with its size and checksum, then the first index;
-  - agentic hybrid search: the agent picks terms and/or a plain-language description, filters, and refines, in a scout on `smol`, answering with citations and dates;
+  - agentic hybrid search: the agent picks terms and/or a plain-language description, filters, and refines, in a scout on the small model, answering with citations and dates;
   - the brain repo's CI.
 - **Decisions** in the brain: `supercharge` searches before it asks and records the human's answers, `adr` writes there, and `living-docs` harvests decisions at ship.
 - **Notes** distilled from raw files by `living-docs`, each citing its sources by hash, so a change in a source marks the note stale. A lint pass keeps, updates, merges, replaces or deletes.
@@ -30,7 +30,7 @@ Hard requirements (owner, 2026-11-03):
 - **Eval:** a corpus plus golden questions, run in CI, with every slice reporting its before and after.
 
 ## Acceptance criteria
-1. On a machine with only omp and the skills, `/brain <question>` with nothing configured asks where the brain is and shows the download size. On `go` it downloads and checks the binary, indexes, and answers with cited sources. No API key, nothing else installed.
+1. On a machine with only omp or Claude Code and the skills, `/brain <question>` with nothing configured asks where the brain is and shows the download size. On `go` it downloads and checks the binary, indexes, and answers with cited sources. No API key, nothing else installed.
 2. Any file a person drops into the brain is indexed or reported as unconverted, including flat text with no structure, PDFs, Office files, email, CSV and Icelandic text. Nothing in it is ever edited by an agent.
 3. A question that shares no words with its answer finds it. A question with an exact term (an ID, a name) finds that.
 4. A business rule decided in an earlier `supercharge` session is cited, not asked again. A superseded decision never comes back as current.
@@ -49,14 +49,14 @@ Adds **Ask the brain** (`/brain <question>`, first-run setup included) to [PRODU
 - OCR of scans and images, audio and video. These files are listed as unconverted.
 - Cross-encoder rerankers (the agent reranks) and approximate nearest-neighbour indexes (brute force over 1-bit codes is enough up to the wall).
 - The GitHub wiki as storage.
-- Agents other than omp. The binary works standalone, but the skills are omp-only, as today.
+- Harnesses other than omp and Claude Code. The binary works standalone.
 - Watching folders in real time. Indexing happens on demand and at ship.
 
 ## Risk
 Medium (default). This is the first runnable code in the bundle, so the binary gets real tests and runs, not just a review.
 
 ## Settled rules (shared by every slice)
-**Brain layout.** `brain:` in a project's AGENTS.md config block is the path to the brain root (absolute, `~/…`, or relative to the repo). The default offered on first run is `~/brain`. Inside the root:
+**Brain layout.** `brain:` in a project's AGENTS.md config block is the path to the brain root (absolute, `~/…`, or relative to the repo). It's optional: it isn't in the block `living-docs` writes and asks about, so neither `living-docs` nor `supercharge` asks for it as a missing key; only `/brain`'s first run sets it. The default offered on first run is `~/brain`. Inside the root:
 - `BRAIN.md`: conventions and format version, short.
 - `decisions/YYYY-MM-DD-slug.md`: decisions, ADRs included. Named by date, not number, because many projects and sessions write to one brain.
 - `notes/*.md`: distilled by agents.
@@ -90,6 +90,12 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - **Trust order:** accepted decisions, then fresh notes, then raw files, then stale notes.
 - Superseded decisions only appear with `--all`, and point to what replaced them.
 
+**Where `supercharge` uses the brain.** Any route that asks business questions (ticket, feature, and the triage after a brainstorm) searches the brain first and cites what's settled instead of asking. After `go`, it records each answer as a decision whose `source` is the issue. A brainstorm that ends in "not now" writes nothing, to the brain included. The direct route asks nothing, so records nothing.
+
+**Harnesses.** The `brain` skill and every skill change work in omp and Claude Code, following [0003](0003-claude-code.md)'s wording rule: name the capability, and name a harness only in a short clause where the two differ.
+- Search scout: omp's `scout` on `smol`; in Claude Code a fresh subagent on `haiku`.
+- Note ingest (slice 4): a builder subagent, omp's `task`; in Claude Code a fresh subagent on `sonnet`.
+
 **Index.**
 - One SQLite file per brain at `.brain/index.sqlite`, holding FTS5 and the vectors (int8, plus 1-bit codes for the first pass).
 - Incremental by content hash.
@@ -103,7 +109,8 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 **Distribution.**
 - `skills/brain/brain.json` pins the version, the download size, and a URL and sha256 per platform.
 - Platforms: linux x64 and arm64, macOS arm64 and x64, windows x64.
-- The binary is cached in `~/.cache/sprengikraftur/brain/<version>/`.
+- The binary is cached in `~/.cache/supercharge/brain/<version>/`.
+- It's downloaded with `gh release download`, so the bundle still needs nothing beyond `git` and `gh`.
 - Nothing is downloaded before the human says `go`, and nothing runs whose checksum doesn't match.
 
 **Eval.**
@@ -125,6 +132,10 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   - measure as we go;
   - sensitivity is out of scope; no GitHub wiki;
   - 1M docs is the wall, and the expected size is well below it; multilingual content.
+- **Owner, 2026-11-12** (review before building, after feature [0003](0003-claude-code.md) and the `supercharge` entry point shipped):
+  - the brain works in Claude Code too, not only omp;
+  - `brain` is an optional config key, set only by `/brain`, never asked for as missing;
+  - `supercharge` searches and records in every route that asks business questions; "not now" records nothing.
 - **Default model `multilingual-e5-small`, int8 (MIT).** Measured on a Ryzen 7 5700G with ONNX Runtime int8:
 
   | Model | English chunks/s | Icelandic chunks/s |
@@ -143,7 +154,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   - one `brain:` path per project, shared by the team (`~/brain` or a relative path).
 
 ## Slices
-1 first. Then 2, 3 and [#24](https://github.com/po2studio/supercharge/issues/24) together. 4 after 3. 5 and 6 together, after 4. 7 after 5. 8 after 2 and 4, alongside 6.
+1 first. Then 2 and 3 together. 4 after 3. 5 and 6 together, after 4. 7 after 5. 8 after 2 and 4, alongside 6.
 - [ ] [#16](https://github.com/po2studio/supercharge/issues/16): Point at a folder, ask why, get a cited answer
 - [ ] [#17](https://github.com/po2studio/supercharge/issues/17): Any file goes in
 - [ ] [#18](https://github.com/po2studio/supercharge/issues/18): Decisions are recorded where they're made and found before anyone asks
@@ -153,10 +164,9 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - [ ] [#22](https://github.com/po2studio/supercharge/issues/22): Big brains: build the index once, everyone pulls
 - [ ] [#23](https://github.com/po2studio/supercharge/issues/23): Model bake-off on the full eval
 
-Related ticket, not part of this feature: [#24](https://github.com/po2studio/supercharge/issues/24) (`living-docs` asks for every config key on first run).
-
 ## Notes for the builder
 - AGENTS.md: `risk: medium`, `approve: [plan, merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`, which also checks relative links in every `.md` file, so eval corpus files must pass it or be excluded by the check.
+- Claude Code facts (model aliases, subagents, nesting) are in [0003](0003-claude-code.md); check them at code.claude.com/docs again, not from memory. Claude Code stays marked untested until a run is written up in `runs/`.
 - **Smoke runs:** "no smoke run for skill changes" covers skill text only. The binary gets tests, real runs and the eval. Skill-text changes are verified by review against the criteria.
 - Every line in a skill should change behaviour. Keep skill additions short and in the existing voice.
 
