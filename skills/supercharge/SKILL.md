@@ -54,6 +54,7 @@ Describe what and why; leave the how to the builder.
 - Size slices by what they deliver, not by count. One slice is fine; so is ten.
 - Before slicing, settle in the feature doc any rule that several slices share (how a value is parsed, shown or checked), asking as below, so slices built in parallel don't each invent their own.
 - Where two cuts are equally vertical, choose the one that lets more slices be built together. Never give up verticality for it: no slice becomes a layer (only the schema, only the API) to free up another.
+- If the feature adds or changes a core flow and the project has no end-to-end harness through the surface users use (as `build-slice` defines it), the first slice that touches a core flow sets it up and records how to run it in `AGENTS.md`: put that in its acceptance criteria and size it for that.
 - Each slice has its own acceptance criteria and notes any known risks, its dependencies, and what it touches: screens, tables, modules, rules.
 - In the feature doc, show which slices can be built together: those with no dependency between them and no screen, table or module in common. A shared rule is fine once the feature doc settles it. For example: "1 first; then 2, 3 and 4 together; 5 after 3."
 

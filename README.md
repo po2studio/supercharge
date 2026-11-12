@@ -23,7 +23,7 @@ The same goes for what the bundle produces. It takes the lightest route that's s
 
 Few instructions doesn't mean low standards. Every slice meets the bar a careful senior engineer sets for their own work:
 
-- **Tests first.** One acceptance test per criterion, seen failing, then the inside test-driven until it passes. What stays is the unit tests and one happy-path end-to-end test per core flow, through what users use.
+- **Tests first.** One acceptance test per criterion, seen failing, then the inside test-driven until it passes. What stays is the unit tests and one happy-path end-to-end test per core flow, through what users use; when there's no harness yet, the plan names setting it up in the first slice.
 - **Run it for real.** Green tests aren't done: the agent runs the thing end to end, in the browser for a UI.
 - **One builder, one independent reviewer.** A different model reviews the diff against the acceptance criteria before the PR, so the builder's blind spots aren't the reviewer's.
 - **Small changes, green CI.** Each slice is its own reviewable change, merged only with CI passing.
