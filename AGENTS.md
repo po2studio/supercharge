@@ -22,5 +22,6 @@ Supercharge is a skill bundle for omp and Claude Code. The skills are `skills/*/
 ```yaml
 risk: medium                 # low | medium | high
 approve: [plan, merge]       # spec | plan | slice | merge: wait for the human at these points
+ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs
 ```

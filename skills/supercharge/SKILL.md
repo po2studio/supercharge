@@ -7,7 +7,7 @@ description: The entry point for any request in a project — an idea, a bug, a 
 
 Take any request to its right next step, and turn new work into something an agent can build and a human can check.
 
-Only route and plan: don't write code. Building happens in `build-slice` or `drive-feature`. The one exception is the `direct` route below.
+Only route and plan: don't write code. Building happens in `build-slice` or `drive-feature`.
 
 `docs/` here means the folder set by `docs` in `AGENTS.md` (default `docs`).
 
@@ -25,7 +25,7 @@ If the config block lacks a key, ask for it in the request's batch of questions,
 ## Triage first
 
 A request may hold several unrelated changes; triage and plan each on its own. Choose the lightest route that's safe, and say which you chose:
-- **direct:** small, low-risk and obvious. Do it here and now: no issue, no acceptance tests, no independent review. It still goes on its own PR into `main`, which waits for `go` if `approve` includes `merge`; then check CI is green and merge it yourself.
+- **direct:** small, low-risk and obvious. No issue and no planning stop, nothing else skipped: `build-slice` builds it in a fresh subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`), given the request, with the same independent review and docs rule. Its PR into `main` waits for `go` if `approve` includes `merge`; on `go` merge per `build-slice`'s rule.
 - **ticket:** one slice. A single issue with acceptance criteria.
 - **feature:** anything bigger, or touching money, auth, deleting data, the data model, or a new external service.
 
@@ -37,7 +37,7 @@ Then ask: **does this change the architecture?** A new component, storage, servi
 
 `docs/features/NNNN-short-slug.md`. Cover:
 - **why:** the problem and who has it
-- **deliverables:** what will exist when it's done
+- **deliverables:** what will exist when it's done; each appears in some slice's "touches"
 - **acceptance criteria:** observable and testable
 - **core flows:** which flows in `docs/PRODUCT.md` the feature adds or changes, or none
 - **out of scope**
@@ -76,4 +76,4 @@ Once the plan is final (after `go` at any `spec` or `plan` stop), create the iss
 - Decide technical questions yourself and record them in the doc. Architecture, and anything that commits outside the codebase (a new service, cost, data leaving the system), goes in a `proposed` ADR, and accepting it is one of the questions in the batch: on `go`, set it `accepted`.
 - Ask in one batch, each question with your default; replying `go` accepts them all. A brainstorm is the exception: a conversation, until the human settles the direction. If `approve` includes `spec` or `plan`, put the questions in that stop instead of stopping twice.
 - Read `approve` from `AGENTS.md` when you get there; the human may have changed it. If it includes `spec`, stop once the deliverables and acceptance criteria are written, before slicing. If it includes `plan`, stop once the slices are planned, before building. At a stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
-- Then a ticket is built by `build-slice` in a fresh subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`), given the issue URL. Pass its questions and `proposed` ADRs to the human, and the answers back; relay its stop (the PR, what to check, `go`), and on `go` merge per `build-slice`'s rule. A feature doesn't: once its doc is on `main`, end the session with a stop that gives each feature issue and says to start it from Orca (or run `/drive-feature <its URL>`; with no tracker, `/drive-feature <its feature doc>`) in a fresh session.
+- A ticket is built by `build-slice` in a fresh subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`), given the issue URL. Pass its questions and `proposed` ADRs to the human, and the answers back; relay its stop (the PR, what to check, `go`), and on `go` merge per `build-slice`'s rule. A feature doesn't: once its doc is on `main`, end the session with a stop that gives each feature issue and says to start it from Orca (or run `/drive-feature <its URL>`; with no tracker, `/drive-feature <its feature doc>`) in a fresh session.

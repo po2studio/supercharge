@@ -25,6 +25,7 @@ Only write docs: don't plan or build.
 - Docs describe current truth. Plans and history belong elsewhere (features, ADRs, git).
 - Derive from the code and existing docs first. Where they disagree, believe the code and flag the gap.
 - Ask the human only what you can't find out: business context and rules, intent, architecture direction, third parties. Decide technical details yourself. Ask in one batch, each question with a suggested default.
+- A feature doc set to `shipped` is history: don't update it. Where it disagrees with PRODUCT, ARCHITECTURE or an ADR, those win.
 - Anything the human wrote or approved is binding. Refine the wording; don't change the meaning.
 - Check accepted ADRs against the code too. If one no longer holds, supersede it with a new ADR, or flag it.
 - Check facts about outside services (model IDs, API versions, prices) against the service itself, not memory or search results.
@@ -38,5 +39,6 @@ If the block or any key below is missing, ask for every missing key in your one 
 ```yaml
 risk: medium                 # low | medium | high: how costly a mistake would be
 approve: [plan, merge]       # spec | plan | slice | merge: wait for the human at these points
+ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs
 ```
