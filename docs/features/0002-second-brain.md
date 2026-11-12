@@ -26,6 +26,7 @@ Hard requirements (owner, 2026-11-03):
 - **Notes** distilled from raw files by `living-docs`, each citing its sources by hash, so a change in a source marks the note stale. A lint pass keeps, updates, merges, replaces or deletes.
 - **Checks:** `brain check` in the brain repo's CI, plus the PR check in `build-slice`: decisions and notes whose `touches:` match the changed paths.
 - **Project docs defer to the brain:** BUSINESS.md and ADRs move there. PRODUCT.md and ARCHITECTURE.md stay per project.
+- **This bundle's own docs describe a bundle with a binary:** the README's Philosophy ("nothing beyond `git` and `gh`", "read it all in one sitting") and `docs/ARCHITECTURE.md` ("no code to run") are rewritten for a bundle whose optional `brain` skill downloads one binary.
 - **Shared index** for big brains: built once in CI, pulled by everyone.
 - **Eval:** a corpus plus golden questions, run in CI, with every slice reporting its before and after.
 
@@ -135,7 +136,8 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - **Owner, 2026-11-12** (review before building, after feature [0003](0003-claude-code.md) and the `supercharge` entry point shipped):
   - the brain works in Claude Code too, not only omp;
   - `brain` is an optional config key, set only by `/brain`, never asked for as missing;
-  - `supercharge` searches and records in every route that asks business questions; "not now" records nothing.
+  - `supercharge` searches and records in every route that asks business questions; "not now" records nothing;
+  - the brain stays in this repo as an opt-in skill: `npx skills add` lets the human pick which skills to install (or `--skill <name>`), and copies only `skills/<name>/`, so `brain/` source never reaches a user's machine and skipping `brain` at install changes nothing else. The README's Philosophy and `docs/ARCHITECTURE.md` are updated as part of this feature.
 - **Default model `multilingual-e5-small`, int8 (MIT).** Measured on a Ryzen 7 5700G with ONNX Runtime int8:
 
   | Model | English chunks/s | Icelandic chunks/s |

@@ -14,7 +14,7 @@ Only route and plan: don't write code. Building happens in `build-slice` or `dri
 ## Route the request
 
 Read `AGENTS.md`, then say which route you chose:
-- **Not set up** (no config block in `AGENTS.md` under `## Supercharge` or the old `## Sprengikraftur`): run `living-docs`, drafting on its defaults so its questions and the docs it wrote go to the human in one stop. On `go`, go on with the request.
+- **Not set up** (no `## Supercharge` config block in `AGENTS.md`): run `living-docs`, drafting on its defaults so its questions and the docs it wrote go to the human in one stop. On `go`, go on with the request.
 - **Direction open, or the human asks to explore:** brainstorm with them until they settle the direction: options, tradeoffs, what you'd pick and why. Write nothing and create no issues before then. Then triage what they settled. If it ends in "not now", write nothing.
 - **New work:** triage and plan it, below.
 - **Planned work** (an issue, a feature doc, "build feature 3, two at a time"): hand it to `drive-feature` for a feature, `build-slice` for a slice or ticket, with the human's words.
@@ -25,7 +25,7 @@ If the config block lacks a key, ask for it in the request's batch of questions,
 ## Triage first
 
 A request may hold several unrelated changes; triage and plan each on its own. Choose the lightest route that's safe, and say which you chose:
-- **direct:** small, low-risk and obvious. Just do it, here and now: no plan, no issue.
+- **direct:** small, low-risk and obvious. Do it here and now: no issue, no acceptance tests, no independent review. It still goes on its own PR into `main`, which waits for `go` if `approve` includes `merge`; then check CI is green and merge it yourself.
 - **ticket:** one slice. A single issue with acceptance criteria.
 - **feature:** anything bigger, or touching money, auth, deleting data, the data model, or a new external service.
 
@@ -61,7 +61,7 @@ Describe what and why; leave the how to the builder.
 
 Create issues with `gh` (omp's `github` tool can't create them; in Claude Code, `gh` is the GitHub tool). Each body starts with the command that builds it (edit the URL in once the issue exists), so a session started from the issue runs the right skill.
 - **Feature:** one issue labelled `feature`, `feature:NNNN` and `ready-for-agent`, starting `/drive-feature <its URL>`, then a short summary and a link to the feature doc. Don't copy the deliverables or acceptance criteria; the doc stays the truth.
-- **Slices:** each a sub-issue of it (`gh issue create --parent`), labelled `slice`, `feature:NNNN` and `ready-for-agent`, starting `/build-slice <its URL>`, then a link to the feature issue, its acceptance criteria, dependencies, the slices it can be built with, and what it touches. Orca doesn't show sub-issues or filter on them, so the `feature:NNNN` label and that link are how the human finds a feature's slices there.
+- **Slices:** each a sub-issue of it (`gh issue create --parent`), labelled `slice`, `feature:NNNN` and `ready-for-agent`, starting `/build-slice <its URL>`, then a link to the feature issue, its acceptance criteria, dependencies, the slices it can be built with, and what it touches.
 - **Ticket:** one issue labelled only `ready-for-agent`, starting `/build-slice <its URL>`, then its acceptance criteria.
 
 With no issue tracker, list the slices in the feature doc.
@@ -71,7 +71,7 @@ Once the plan is final (after `go` at any `spec` or `plan` stop), create the iss
 ## Working with the human
 
 - Start from whatever exists, from a one-line idea to a full spec. What they wrote is binding; fill only the gaps.
-- Ask about business rules the docs don't settle (what gets recorded, money, who can do what, what users see), as far as `risk` says. `low`: only when you can't go on without an answer. `medium`: where a wrong guess records wrong data or is hard to undo. `high`: any rule that isn't written down. Never guess silently: whatever you don't ask goes in the doc as an assumption.
+- Ask about business rules the docs don't settle (what gets recorded, money, who can do what, what users see) only as far as `risk` says: `low`, when you can't go on without an answer; `medium`, where a wrong guess records wrong data or is hard to undo; `high`, any rule that isn't written down. Never guess silently: whatever you don't ask goes in the doc as an assumption.
 - Decide technical questions yourself and record them in the doc. Architecture, and anything that commits outside the codebase (a new service, cost, data leaving the system), goes in a `proposed` ADR, and accepting it is one of the questions in the batch: on `go`, set it `accepted`.
 - Ask in one batch, each question with your default; replying `go` accepts them all. A brainstorm is the exception: a conversation, until the human settles the direction. If `approve` includes `spec` or `plan`, put the questions in that stop instead of stopping twice.
 - Read `approve` from `AGENTS.md` when you get there; the human may have changed it. If it includes `spec`, stop once the deliverables and acceptance criteria are written, before slicing. If it includes `plan`, stop once the slices are planned, before building. At a stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").

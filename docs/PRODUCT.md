@@ -10,7 +10,7 @@ Developers and owners building software with strong LLM agents in omp or Claude 
 
 1. **Start a request:** install the skills globally and set the models once (omp's model roles, or Claude Code's `/model`); then every request is `/supercharge <request>`: an idea, a bug, a change or a feature. In a project that isn't set up, it first runs `living-docs`, which writes `AGENTS.md` (with the config block) and the docs, and stops once for the human to check them and answer its questions, each with its default. Then it routes the request:
    - **direction open, or the human asks to explore:** a brainstorm with the human; nothing is written and no issue created until they settle the direction, and "not now" writes nothing;
-   - **new work:** triaged as direct (done now), a ticket (one issue, built in the same session) or a feature (a feature doc, a feature issue, and the slices as sub-issues), with one batch of business questions and the stops `approve` sets. A feature doc reaches `main` on its own PR, and the session ends with a stop saying to start the feature issue in a fresh session;
+   - **new work:** triaged as direct (done now, on its own PR, with no issue or independent review), a ticket (one issue, built in the same session) or a feature (a feature doc, a feature issue, and the slices as sub-issues), with one batch of business questions and the stops `approve` sets. A feature doc reaches `main` on its own PR, and the session ends with a stop saying to start the feature issue in a fresh session;
    - **planned work:** handed to `drive-feature` or `build-slice`;
    - **drifted docs:** handed to `living-docs`.
 2. **Build a feature:** start the feature issue, or run `/drive-feature <issue URL or doc>`. `build-slice` subagents build the slices, in parallel where the doc allows. The finish refreshes the docs, sets the status to `shipped`, and opens one PR into `main`.
@@ -20,7 +20,7 @@ None has an automated end-to-end test: skill text has no runtime. A real run che
 
 ## Rules
 
-- **Config:** `risk`, `approve`, `ci_budget` and `docs`, in the `## Supercharge` block of a project's `AGENTS.md` (a block under the old `## Sprengikraftur` counts). A missing key is asked for with the next request's questions, and takes its default until answered. See [Config](../README.md#config).
+- **Config:** `risk`, `approve` and `docs`, in the `## Supercharge` block of a project's `AGENTS.md`. A missing key is asked for with the next request's questions, and takes its default until answered. See [Config](../README.md#config).
 - **The human acts only at the `approve` steps**, by replying `go`. The agent merges; the human never does.
 - **Ask about the business, decide the technical.** Business questions are asked in one batch, each with a default, as far as `risk` says; the one exception is a brainstorm, a back-and-forth until the human settles the direction; anything not asked is recorded as an assumption. A commitment outside the codebase is a `proposed` ADR the human accepts.
 - **What the human wrote or approved is binding.** Conflicts are flagged, not silently resolved.

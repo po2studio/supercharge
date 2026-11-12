@@ -7,7 +7,7 @@ description: Create or refresh a project's living docs — AGENTS.md plus docs/B
 
 Give any agent arriving cold what it needs to work well, in as few words as possible.
 
-Only write docs: don't plan or build. When you're done, say what comes next (usually `supercharge`).
+Only write docs: don't plan or build.
 
 ## The docs
 
@@ -33,11 +33,10 @@ Only write docs: don't plan or build. When you're done, say what comes next (usu
 
 ## Config block (in AGENTS.md)
 
-If it's under the bundle's old name, `## Sprengikraftur`, rename the heading to `## Supercharge`. If the block or any key below is missing, ask for every missing key in your one batch of questions, each with its default and one line on what it does, and write the answers; `go` writes the defaults. Don't ask about keys already set.
+If the block or any key below is missing, ask for every missing key in your one batch of questions, each with its default and one line on what it does, and write the answers; `go` writes the defaults. Don't ask about keys already set.
 
 ```yaml
 risk: medium                 # low | medium | high: how costly a mistake would be
 approve: [plan, merge]       # spec | plan | slice | merge: wait for the human at these points
-ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs
 ```
