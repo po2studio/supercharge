@@ -26,7 +26,7 @@ Few instructions doesn't mean low standards. Every slice meets the bar a careful
 - **Tests first.** One acceptance test per criterion, seen failing, then the inside test-driven until it passes. What stays is the unit tests and one happy-path end-to-end test per core flow, through what users use.
 - **Run it for real.** Green tests aren't done: the agent runs the thing end to end, in the browser for a UI.
 - **One builder, one independent reviewer.** A different model reviews the diff against the acceptance criteria before the PR, so the builder's blind spots aren't the reviewer's.
-- **Small changes, green CI.** Each slice is its own reviewable change, merged only with CI passing, and CI kept within a time budget.
+- **Small changes, green CI.** Each slice is its own reviewable change, merged only with CI passing.
 - **Build for what exists.** No compatibility layers for data, users or releases that don't exist yet. Every external service sits behind an interface with a fake, so everything runs offline.
 - **Rigour scales with risk.** More edge-case tests and a stricter review where a mistake costs more, not everywhere.
 - **Decisions written down.** A decision ledger in each PR, ADRs for what's hard to reverse, and the docs updated as part of done.
@@ -86,12 +86,6 @@ This installs into `~/.claude/skills`; leave out `-g` for one project's `.claude
 
 Claude Code needs v2.1.283 or later, where auto mode is the starting permission mode. On an older version, or where auto mode isn't the starting mode, start with `claude --permission-mode auto`. Claude Code is supported but untested: it stays that way until a run in it is written up in [`runs/`](runs/).
 
-Installed before `supercharge` replaced `plan-feature`? Remove `plan-feature`, or both skills claim the same requests, then run the install command again to get `supercharge`:
-
-```sh
-npx skills remove plan-feature -g -y
-```
-
 ## Config
 
 A YAML block in a `## Supercharge` section of the project's `AGENTS.md`. `living-docs` writes it when `supercharge` first sets a project up, asking for each key with its default. A key that's still missing is asked for with the next request's questions:
@@ -99,7 +93,6 @@ A YAML block in a `## Supercharge` section of the project's `AGENTS.md`. `living
 ```yaml
 risk: medium                 # low | medium | high; a feature doc may override this, with a reason
 approve: [plan, merge]       # spec | plan | slice | merge: wait for the human at these points
-ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs
 ```
 
@@ -122,7 +115,7 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 | `spec` | After the feature doc's deliverables and acceptance criteria, before slicing | Check *what* gets built. Reply `go` or say what to change | It plans the slices |
 | `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It creates the issues. A ticket is built in the same session; a feature is built once you start its issue in a fresh session |
 | `slice` | After each slice, or each batch built together, is built, reviewed and merged into the feature branch | Try it: the stop says how to run it and what to check. Reply `go` or report a problem | It fixes the problem, or starts the next slice |
-| `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches and worktrees its agents created. In an ADE such as Orca, it leaves the session's worktree and the branch checked out there for you to remove there. The feature is done |
+| `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches and worktrees its agents created, never the one your session runs in. The feature is done |
 
 - **`[plan, merge]` (default):** you check what gets built and how it's cut before any code is written, then see the finished feature. It catches wrong guesses about the product early, which matters most with models that don't ask questions (see [run 4](runs/2026-10-14-receipt-scanner-cheap-models.md)).
 - **`[merge]`:** you only see the finished feature.
@@ -131,11 +124,7 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 
 Whatever `approve` says, planning a feature ends its session with a handoff: start the feature issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. You never merge anything yourself: approving is replying `go` in the session.
 
-Small changes skip the feature machinery: a one-line fix is just done, and a single-slice ticket is built in the same session, with its own PR into `main`, which waits for your `go` if `merge` is set.
-
-### `ci_budget`
-
-How long CI may take. When it takes longer, `build-slice` opens an issue to speed it up, if there isn't one open already.
+Small changes skip the feature machinery: a one-line fix is done directly, with no issue or independent review, and a single-slice ticket is built in the same session. Each gets its own PR into `main`, which waits for your `go` if `merge` is set.
 
 ### `docs`
 
@@ -157,7 +146,7 @@ Where the docs, ADRs and feature docs live; every `docs/` path in the skills and
    - **Drifted docs:** it hands them to `living-docs`.
 3. **Do what each stop says.** Answer its questions (`go` accepts the defaults), check the plan if `plan` is in `approve`, and approve the PR into `main` with `go`. The agent merges it, and the docs are already current. A feature ends the planning session: start its issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. When a request is finished, start a new session for the next one.
 
-Every issue the bundle creates starts with the command that builds it, so you can start work from Orca's issue list. Filter it with `is:open label:feature` for the features, `is:open label:ready-for-agent -label:slice` for everything you can start at the top level (features and tickets), or `label:feature:NNNN` for one feature and its slices. Orca doesn't show sub-issues or filter on them, so each slice also links to its feature issue.
+Every issue the bundle creates starts with the command that builds it, so you can start work from Orca's issue list. Filter it with `is:open label:feature` for the features, `is:open label:ready-for-agent -label:slice` for everything you can start at the top level (features and tickets), or `label:feature:NNNN` for one feature and its slices. Each slice also links to its feature issue.
 
 To build an existing plan:
 - **In one session:** start the feature issue from Orca, or run `/drive-feature <feature issue URL or docs/features/NNNN-*.md>`, in omp or Claude Code. It builds the slices the plan marks as buildable together in parallel, and the rest in dependency order, closes each slice's issue as it merges, and the final PR closes the feature issue. To check as you go, or to build fewer at once, add a limit in plain words. It stops after each batch on the feature branch, and `go` starts the next. For example:
@@ -202,15 +191,15 @@ modelRoles:
 
 Without `task`, builders run on `default`; without `smol`, so do the small jobs, at the planning model's price. Keep `task` and `slow` different. On a subscription, choose by quota rather than price: a cheaper builder still saves most of it, because building uses most of the tokens.
 
-**In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
+**In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket built in an Opus session is reviewed by Sonnet: the reviewer checks the diff against the criteria, it doesn't need to be the stronger model. The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
 
-Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed.
+Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed. Sonnet 5.5 builds in the owner's daily use (2026-11-12), without a write-up.
 
 | Model | In / out | Plan | Build | Review |
 |---|---|---|---|---|
 | `anthropic/claude-fable-5.1` | $10 / $50 | ✓ | ✓ | ✓ |
 | `anthropic/claude-opus-5.5` | $4 / $20 | ✓ | ✓ | ✓ |
-| `anthropic/claude-sonnet-5.5` | $2 / $10 | ? | ? | ? |
+| `anthropic/claude-sonnet-5.5` | $2 / $10 | ? | ✓ | ? |
 | `openai/gpt-6-astra` | $10 / $50 | ✓ | ✓ | ✓ |
 | `openai/gpt-6.1-sol` | $2 / $10 | ✓ | ✓ | ✓ |
 | `z-ai/glm-5.3` | $0.07 / $1.40 | ✗ | ✓ | ? |
