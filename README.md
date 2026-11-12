@@ -46,7 +46,8 @@ These run through every skill:
 ```mermaid
 flowchart TB
     Y["You: supercharge …, one session per request"] --> P["supercharge<br>sets the project up if needed, explores with you, one batch of questions, plan"]
-    P -->|"ticket, builder subagent"| T["build-slice"]
+    P -->|"direct change: request + criteria"| D["build-slice, builder subagent"]
+    P -->|"ticket: issue"| T["build-slice, builder subagent"]
     P -->|"features: issues"| O["ADE such as Orca: the repo's issue list"]
     O --> F2["fresh session: feature 13<br>drive-feature"]
     O --> F1["fresh session: feature 12<br>drive-feature"]
@@ -60,11 +61,12 @@ flowchart TB
     F1 --> A1 & A2 & A3
     A1 & A2 & A3 --> B["feature branch"]
     B --> L["living-docs<br>docs match what shipped"] --> PR1["PR into main"]
+    D --> PR4["PR into main"]
     T --> PR3["PR into main"]
-    PR2 & PR1 & PR3 -->|"you: go"| M["main"]
+    PR2 & PR1 & PR3 & PR4 -->|"you: go"| M["main"]
 ```
 
-Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per request, which builds a ticket itself; each feature gets a fresh session of its own, one subagent per slice, each in its own worktree. Every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions and check the plan at the start, and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp or Claude Code sessions side by side, started with the issue URLs.
+Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per request, which hands a direct change or a ticket to a builder subagent; each feature gets a fresh session of its own, one subagent per slice, each in its own worktree. Every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions and check the plan at the start, and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp or Claude Code sessions side by side, started with the issue URLs.
 
 ## Install
 
