@@ -14,7 +14,7 @@ Developers and owners building software with strong LLM agents in omp or Claude 
    - **planned work:** handed to `drive-feature` or `build-slice`;
    - **drifted docs:** handed to `living-docs`.
 2. **Build a feature:** start the feature issue, or run `/drive-feature <issue URL or doc>`. `build-slice` subagents build the slices, in parallel where the doc allows. The finish refreshes the docs, sets the status to `shipped`, and opens one PR into `main`.
-3. **Build a slice or ticket:** start its issue, or run `/build-slice <issue URL>`: tests first, run for real, reviewed by a different model, then a PR with green CI that closes the issue.
+3. **Build a slice or ticket:** start its issue, or run `/build-slice <issue URL>`: a builder subagent builds it, tests first, run for real, reviewed by a different model, then a PR with green CI that closes the issue; the session relays the stop.
 
 None has an automated end-to-end test: skill text has no runtime. A real run checks a flow, written up in [`runs/`](../runs/).
 
