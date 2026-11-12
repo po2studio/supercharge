@@ -1,14 +1,14 @@
 # Product
 
-Supercharge is a skill bundle for [omp](https://github.com/can1357/oh-my-pi): five skills that take a request from one line to merged, tested code. The human answers one batch of questions and checks the plan at the start, and replies `go` at the end. The [README](../README.md) is the user-facing doc; this is the short version agents work from.
+Supercharge is a skill bundle for [omp](https://github.com/can1357/oh-my-pi) and [Claude Code](https://code.claude.com): five skills that take a request from one line to merged, tested code. The human answers one batch of questions and checks the plan at the start, and replies `go` at the end. The [README](../README.md) is the user-facing doc; this is the short version agents work from.
 
 ## Users
 
-Developers and owners building software with strong LLM agents in omp, often starting work from an ADE's issue list (Orca). They settle business rules and approve; agents do the rest.
+Developers and owners building software with strong LLM agents in omp or Claude Code, often starting work from an ADE's issue list (Orca). They settle business rules and approve; agents do the rest.
 
 ## Core flows
 
-1. **Start a request:** install the skills globally and set omp's model roles once; then every request is `/supercharge <request>`: an idea, a bug, a change or a feature. In a project that isn't set up, it first runs `living-docs`, which writes `AGENTS.md` (with the config block) and the docs, and stops once for the human to check them and answer its questions, each with its default. Then it routes the request:
+1. **Start a request:** install the skills globally and set the models once (omp's model roles, or Claude Code's `/model`); then every request is `/supercharge <request>`: an idea, a bug, a change or a feature. In a project that isn't set up, it first runs `living-docs`, which writes `AGENTS.md` (with the config block) and the docs, and stops once for the human to check them and answer its questions, each with its default. Then it routes the request:
    - **direction open, or the human asks to explore:** a brainstorm with the human; nothing is written and no issue created until they settle the direction, and "not now" writes nothing;
    - **new work:** triaged as direct (done now), a ticket (one issue, built in the same session) or a feature (a feature doc, a feature issue, and the slices as sub-issues), with one batch of business questions and the stops `approve` sets. A feature doc reaches `main` on its own PR, and the session ends with a stop saying to start the feature issue in a fresh session;
    - **planned work:** handed to `drive-feature` or `build-slice`;

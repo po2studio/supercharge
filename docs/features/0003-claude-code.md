@@ -1,6 +1,6 @@
 # 0003: Claude Code: install the skills and they work
 
-Feature issue: [#31](https://github.com/po2studio/supercharge/issues/31). Status: **planned**.
+Feature issue: [#31](https://github.com/po2studio/supercharge/issues/31). Status: **shipped**.
 
 ## Why
 The bundle runs only in omp. Owners who work in Claude Code (CC) can't use it, or can use it only with guarantees quietly lost: the skills name omp's tools, and where one is missing they fall back to "an equivalent". In CC the obvious equivalents break the bundle's rules:
@@ -80,13 +80,13 @@ Medium (default). A wrong word in a skill loses a guarantee silently: a same-mod
   - Orca starts CC sessions from an issue the same way it starts omp sessions;
   - the README model table stays as it is: the models are the same, only the harness differs.
 - **Conflict to settle:** [0002](0002-second-brain.md) puts "agents other than omp" out of scope "as today". Once this ships, that reason no longer holds. Not changed here; the owner decides when 0002 is built.
-- **Overlap:** open ticket [#30](https://github.com/po2studio/supercharge/issues/30) (rename `plan-feature` to `supercharge`) edits the same README sections and docs. Whichever merges second resolves the conflicts. If #30 lands first, slice 1 edits `skills/supercharge/` in place of `skills/plan-feature/`.
+- **Overlap:** ticket [#30](https://github.com/po2studio/supercharge/issues/30) (rename `plan-feature` to `supercharge`) landed first, so slice 1 edited `skills/supercharge/`.
 
 ## Slices
 1 ([#32](https://github.com/po2studio/supercharge/issues/32)) and 2 ([#33](https://github.com/po2studio/supercharge/issues/33)) together: they share only the README, in different sections. 3 ([#34](https://github.com/po2studio/supercharge/issues/34)) after 2.
-- [ ] [#32](https://github.com/po2studio/supercharge/issues/32): Install and plan in Claude Code
-- [ ] [#33](https://github.com/po2studio/supercharge/issues/33): Build a ticket in Claude Code
-- [ ] [#34](https://github.com/po2studio/supercharge/issues/34): Drive a feature in Claude Code
+- [x] [#32](https://github.com/po2studio/supercharge/issues/32): Install and plan in Claude Code
+- [x] [#33](https://github.com/po2studio/supercharge/issues/33): Build a ticket in Claude Code
+- [x] [#34](https://github.com/po2studio/supercharge/issues/34): Drive a feature in Claude Code
 
 ## Notes for the builder
 - AGENTS.md: `risk: medium`, `approve: [plan, merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`.
