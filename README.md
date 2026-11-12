@@ -108,16 +108,16 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 | Value | Stops | You | Then |
 |---|---|---|---|
 | `spec` | After the feature doc's deliverables and acceptance criteria, before slicing | Check *what* gets built. Reply `go` or say what to change | It plans the slices |
-| `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It builds every slice |
+| `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It creates the issues. A ticket is built in the same session; a feature is built once you start its issue in a fresh session |
 | `slice` | After each slice, or each batch built together, is built, reviewed and merged into the feature branch | Try it: the stop says how to run it and what to check. Reply `go` or report a problem | It fixes the problem, or starts the next slice |
 | `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches and worktrees its agents created. In an ADE such as Orca, it leaves the session's worktree and the branch checked out there for you to remove there. The feature is done |
 
 - **`[plan, merge]` (default):** you check what gets built and how it's cut before any code is written, then see the finished feature. It catches wrong guesses about the product early, which matters most with models that don't ask questions (see [run 4](runs/2026-10-14-receipt-scanner-cheap-models.md)).
 - **`[merge]`:** you only see the finished feature.
 - **`[slice, merge]`:** test as you go; use it when you want to see each step working on a real device or real data. To see every slice on its own, add "one at a time" to the command.
-- **`[]`:** fully hands-off; the agent merges into `main` as soon as CI passes.
+- **`[]`:** no approvals; the agent merges into `main` as soon as CI passes.
 
-You never merge anything yourself: approving is replying `go` in the session.
+Whatever `approve` says, planning a feature ends its session with a handoff: start the feature issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. You never merge anything yourself: approving is replying `go` in the session.
 
 Small changes skip the feature machinery: a one-line fix is just done, and a single-slice ticket is built in the same session, with its own PR into `main`, which waits for your `go` if `merge` is set.
 
