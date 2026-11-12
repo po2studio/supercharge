@@ -36,7 +36,7 @@ Few instructions doesn't mean low standards. Every slice meets the bar a careful
 These run through every skill:
 
 1. **Docs are the current truth.** A few short docs say why and what; code and tests show how. Updating the docs is part of done.
-2. **Ask about the business, decide the technical.** Business rules (what gets recorded, money, who can do what, what users see) are never guessed silently. Technical choices are the agent's, recorded as it goes. Architecture and commitments outside the codebase (third parties, cost, data leaving the system, licenses) are proposed as ADRs for the human to accept. Questions come in one batch, each with a default, so `go` answers them all.
+2. **Ask about the business, decide the technical.** Business rules (what gets recorded, money, who can do what, what users see) are never guessed silently. Technical choices are the agent's, recorded as it goes. Architecture and commitments outside the codebase (third parties, cost, data leaving the system, licenses) are proposed as ADRs for the human to accept. Questions come in one batch, each with a default, so `go` answers them all; only a brainstorm, while the direction is still open, is a back-and-forth.
 3. **What's written is binding.** Anything the human wrote or approved is a requirement. Fill the gaps; flag conflicts rather than silently "improving" things.
 4. **Vertical slices, sized by what they deliver.** Each slice works end to end and has acceptance criteria. The plan marks which slices can be built together, and those are built in parallel; rules they share are settled in the feature doc first, so each slice doesn't invent its own.
 5. **Stop only where a human is needed.** Run every other step. At a stop, say exactly what to do and what happens after, so nothing has to be remembered.
@@ -45,11 +45,11 @@ These run through every skill:
 
 ```mermaid
 flowchart TB
-    Y["You: requests"] --> P["plan-feature, one session per request<br>one batch of questions, feature doc, issues"]
-    P --> O["ADE such as Orca: the repo's issue list"]
-    O --> F2["session: feature 13<br>drive-feature"]
-    O --> F1["session: feature 12<br>drive-feature"]
-    O --> T["session: ticket 14<br>build-slice"]
+    Y["You: supercharge …, one session per request"] --> P["supercharge<br>sets the project up if needed, explores with you, one batch of questions, plan"]
+    P -->|"ticket, same session"| T["build-slice"]
+    P -->|"features: issues"| O["ADE such as Orca: the repo's issue list"]
+    O --> F2["fresh session: feature 13<br>drive-feature"]
+    O --> F1["fresh session: feature 12<br>drive-feature"]
     F2 --> F2s["its slices, the same way"] --> PR2["PR into main"]
     subgraph S ["build-slice: one subagent per slice, in parallel where the plan allows"]
         direction LR
@@ -64,7 +64,7 @@ flowchart TB
     PR2 & PR1 & PR3 -->|"you: go"| M["main"]
 ```
 
-Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per feature or ticket, one subagent per slice, each in its own worktree; every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions at the start and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp sessions side by side, started with the issue URLs.
+Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per request, which builds a ticket itself; each feature gets a fresh session of its own, one subagent per slice, each in its own worktree. Every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions and check the plan at the start, and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp sessions side by side, started with the issue URLs.
 
 ## Install
 
@@ -72,15 +72,21 @@ Each slice: acceptance tests first, built, run for real, reviewed by a different
 npx skills add po2studio/supercharge -g -a pi
 ```
 
-`pi` is omp's upstream, so this installs into `~/.agents/skills`, which omp reads. Leave out `-g` to install into one project's `.agents/skills` instead. Check with `omp read skill://plan-feature`; update with `npx skills update -g`.
+`pi` is omp's upstream, so this installs into `~/.agents/skills`, which omp reads. Leave out `-g` to install into one project's `.agents/skills` instead. Check with `omp read skill://supercharge`; update with `npx skills update -g`.
+
+Installed before `supercharge` replaced `plan-feature`? Remove `plan-feature`, or both skills claim the same requests, then run the install command again to get `supercharge`:
+
+```sh
+npx skills remove plan-feature -g -y
+```
 
 ## Config
 
-A YAML block in a `## Supercharge` section of the project's `AGENTS.md`. `living-docs` asks for each key that isn't set yet, with its default, and writes the block:
+A YAML block in a `## Supercharge` section of the project's `AGENTS.md`. `living-docs` writes it when `supercharge` first sets a project up, asking for each key with its default. A key that's still missing is asked for with the next request's questions:
 
 ```yaml
 risk: medium                 # low | medium | high; a feature doc may override this, with a reason
-approve: [merge]             # spec | plan | slice | merge: wait for the human at these points
+approve: [plan, merge]       # spec | plan | slice | merge: wait for the human at these points
 ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs
 ```
@@ -102,18 +108,18 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 | Value | Stops | You | Then |
 |---|---|---|---|
 | `spec` | After the feature doc's deliverables and acceptance criteria, before slicing | Check *what* gets built. Reply `go` or say what to change | It plans the slices |
-| `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It builds every slice |
+| `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It creates the issues. A ticket is built in the same session; a feature is built once you start its issue in a fresh session |
 | `slice` | After each slice, or each batch built together, is built, reviewed and merged into the feature branch | Try it: the stop says how to run it and what to check. Reply `go` or report a problem | It fixes the problem, or starts the next slice |
 | `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches and worktrees its agents created. In an ADE such as Orca, it leaves the session's worktree and the branch checked out there for you to remove there. The feature is done |
 
-- **`[merge]` (default):** you only see the finished feature.
-- **`[plan, merge]`:** also catches wrong guesses about the product before any code is written. Use it with models that don't ask questions (see [run 4](runs/2026-10-14-receipt-scanner-cheap-models.md)).
+- **`[plan, merge]` (default):** you check what gets built and how it's cut before any code is written, then see the finished feature. It catches wrong guesses about the product early, which matters most with models that don't ask questions (see [run 4](runs/2026-10-14-receipt-scanner-cheap-models.md)).
+- **`[merge]`:** you only see the finished feature.
 - **`[slice, merge]`:** test as you go; use it when you want to see each step working on a real device or real data. To see every slice on its own, add "one at a time" to the command.
-- **`[]`:** fully hands-off; the agent merges into `main` as soon as CI passes.
+- **`[]`:** no approvals; the agent merges into `main` as soon as CI passes.
 
-You never merge anything yourself: approving is replying `go` in the session.
+Whatever `approve` says, planning a feature ends its session with a handoff: start the feature issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. You never merge anything yourself: approving is replying `go` in the session.
 
-Small changes skip the feature machinery: a one-line fix is just done, and a single-slice ticket gets its own PR into `main`, which waits for your `go` if `merge` is set.
+Small changes skip the feature machinery: a one-line fix is just done, and a single-slice ticket is built in the same session, with its own PR into `main`, which waits for your `go` if `merge` is set.
 
 ### `ci_budget`
 
@@ -125,17 +131,19 @@ Where the docs, ADRs and feature docs live; every `docs/` path in the skills and
 
 ## Usage
 
-### Setup (once per project)
+### Setup (once)
 
-1. **Install** the skills and **set the model roles** (below).
-2. In omp, in the project's directory, run `/living-docs`, adding what you know: what it's for, who uses it, the stack. It reads any existing code and asks one batch of questions, including every [config](#config) key that isn't set yet, each with its default; `go` accepts them all.
-3. **Read the docs it writes** and fix anything wrong; what you write there is binding.
+**Install** the skills and **set the model roles** (below). That's all: the first request in a project sets it up.
 
 ### Daily use
 
 1. **Start a new session for each request.** The docs carry the context, so a fresh session loses nothing, and it's cheaper and sharper than one that has run for days.
-2. **Ask for what you want**, from one line to a full spec. `plan-feature` usually loads by itself; if not, run `/plan-feature <request>`. Small things are done directly; bigger ones get a feature doc, plus a GitHub feature issue with the slices as its sub-issues. The doc reaches `main` on its own PR, which the agent merges without waiting for `merge`, so a session started from any of the issues can read it.
-3. **Do what each stop says.** Answer its questions (`go` accepts the defaults), check the plan if `plan` is in `approve`, and approve the PR into `main` with `go`. The agent merges it, and the docs are already current. When a request is finished, start a new session for the next one.
+2. **Run `/supercharge` with what you want:** an idea, a bug, a change or a feature, from one line to a full spec. For example, `/supercharge the login page fails on an empty email`, or `/supercharge let's explore pricing before we build anything`. In a project that isn't set up yet, it first runs `living-docs`: it reads any existing code, writes `AGENTS.md` (with the [config](#config) block) and the docs, and stops once for you to read them and answer its questions, including every config key that isn't set yet, each with its default; `go` accepts them all. Fix anything wrong in the docs; what you write there is binding. Then it takes your request:
+   - **Direction open, or you ask to explore:** it brainstorms with you, back and forth, and writes nothing until you settle the direction. "Not now" ends it with nothing written.
+   - **New work:** small things are done directly; a ticket gets one issue and is built in the same session; bigger work gets a feature doc, plus a GitHub feature issue with the slices as its sub-issues. The doc reaches `main` on its own PR, which the agent merges without waiting for `merge`, so a session started from any of the issues can read it.
+   - **Planned work** (an issue, a feature doc, "build feature 3, two at a time"): it hands it to `drive-feature` or `build-slice`.
+   - **Drifted docs:** it hands them to `living-docs`.
+3. **Do what each stop says.** Answer its questions (`go` accepts the defaults), check the plan if `plan` is in `approve`, and approve the PR into `main` with `go`. The agent merges it, and the docs are already current. A feature ends the planning session: start its issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. When a request is finished, start a new session for the next one.
 
 Every issue the bundle creates starts with the command that builds it, so you can start work from Orca's issue list. Filter it with `is:open label:feature` for the features, `is:open label:ready-for-agent -label:slice` for everything you can start at the top level (features and tickets), or `label:feature:NNNN` for one feature and its slices. Orca doesn't show sub-issues or filter on them, so each slice also links to its feature issue.
 
@@ -153,20 +161,20 @@ To build an existing plan:
 
 | Skill | Does |
 |---|---|
+| `supercharge` | The entry point for any request: sets the project up, brainstorms, triages, then a ticket or `docs/features/NNNN-*.md` plus a feature issue with its slices as sub-issues, and hands planned work to `drive-feature` or `build-slice` |
 | `living-docs` | Creates or refreshes `AGENTS.md` and `docs/{BUSINESS,PRODUCT,ARCHITECTURE,DESIGN}.md` (BUSINESS and DESIGN are optional) |
 | `adr` | Records a decision in `docs/adr/NNNN-*.md` |
-| `plan-feature` | Triage, then `docs/features/NNNN-*.md` plus a feature issue with its slices as sub-issues |
 | `build-slice` | Builds one slice to done: tests, end-to-end check, review, PR, green CI, docs updated |
 | `drive-feature` | Runs `build-slice` across a feature's slices, then reports once |
 
-Each skill works on its own; they coordinate only through the files above and their GitHub issues.
+Each skill works on its own; `supercharge` and `drive-feature` start the others, and otherwise they coordinate only through the files above and their GitHub issues.
 Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`, the `github` tool), plus `gh` for issues, which the `github` tool can't create. If one is missing, the skill uses an equivalent, or stops and says so.
 
 ## Models
 
 There are three jobs, and they need different things:
 
-- **Planning** (`living-docs`, `plan-feature`): judgement about the business, such as which questions to ask, safe defaults, and checking facts. It uses few tokens, so use the strongest model you have.
+- **Planning** (`supercharge`, `living-docs`): judgement about the business, such as which questions to ask, safe defaults, and checking facts. It uses few tokens, so use the strongest model you have.
 - **Building** (`build-slice`): good technical judgement. It uses most of the tokens, so this is where a cheaper model pays off.
 - **Reviewing** (omp's `reviewer` agent): an independent check. Always a different model from the builder, ideally from a different company. It's cheap.
 

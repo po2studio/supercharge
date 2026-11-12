@@ -16,7 +16,7 @@ The owner wants CC to work like omp: install the skills, nothing else needed.
 - `docs/ARCHITECTURE.md`, `docs/PRODUCT.md` and `AGENTS.md` describe a bundle for omp and CC.
 
 ## Acceptance criteria
-1. In CC, `npx skills add po2studio/supercharge -g -a claude-code` is the whole install: no plugin, agent files, settings or hooks, and no tools beyond those omp needs (`git`, `gh`). `/living-docs`, `/plan-feature`, `/build-slice <URL>` and `/drive-feature <URL>` run as typed, including as the first line of an issue an ADE starts.
+1. In CC, `npx skills add po2studio/supercharge -g -a claude-code` is the whole install: no plugin, agent files, settings or hooks, and no tools beyond those omp needs (`git`, `gh`). `/living-docs`, `/supercharge`, `/build-slice <URL>` and `/drive-feature <URL>` run as typed, including as the first line of an issue an ADE starts.
 2. In a project that has a `CLAUDE.md`, `living-docs` makes sure CC loads `AGENTS.md`: the `CLAUDE.md` imports it with `@AGENTS.md`.
 3. In CC, every slice is reviewed by a fresh subagent (not a fork) on a different model from the builder (`opus` for a `sonnet` builder, otherwise `sonnet`), given only the acceptance criteria and the diff. If no such reviewer can be started, `build-slice` stops and says so; it never falls back to the builder's model.
 4. In CC, `drive-feature` builds each slice in a fresh subagent (not a fork) on `sonnet`, and slices built in parallel each in their own worktree. Every slice's branch starts from the PR's target branch (the feature branch, if there is one), wherever its worktree started.
@@ -31,7 +31,7 @@ The owner wants CC to work like omp: install the skills, nothing else needed.
 9. `python3 scripts/check.py` passes.
 
 ## Core flows
-No new flow. **Set up a project**, **Plan a request**, **Build a feature** and **Build a slice or ticket** in [PRODUCT.md](../PRODUCT.md) now also run in CC.
+No new flow. **Start a request**, **Build a feature** and **Build a slice or ticket** in [PRODUCT.md](../PRODUCT.md) now also run in CC.
 
 ## Out of scope
 - A CC plugin, `.claude/agents/` files, CC settings or hooks shipped by the bundle.
@@ -89,7 +89,7 @@ Medium (default). A wrong word in a skill loses a guarantee silently: a same-mod
 - [ ] [#34](https://github.com/po2studio/supercharge/issues/34): Drive a feature in Claude Code
 
 ## Notes for the builder
-- AGENTS.md: `risk: medium`, `approve: [merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`.
+- AGENTS.md: `risk: medium`, `approve: [plan, merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`.
 - No smoke run (AGENTS.md): verification is the independent review of the diff against these criteria.
 - Every line in a skill should change behaviour. Keep additions short and in the existing voice; prefer rewording an omp-only line over adding one.
 - CC facts are from code.claude.com/docs (sub-agents, skills, memory, worktrees, permission-modes, plugins/components), read 2026-11-09. Check them there again, not from memory.

@@ -21,7 +21,7 @@ Supercharge is a skill bundle for omp. The skills are `skills/*/SKILL.md`; `READ
 
 ```yaml
 risk: medium                 # low | medium | high
-approve: [merge]             # spec | plan | slice | merge: wait for the human at these points
+approve: [plan, merge]       # spec | plan | slice | merge: wait for the human at these points
 ci_budget: 5m                # how long CI may take
 docs: docs                   # folder for the docs, ADRs and feature docs
 ```

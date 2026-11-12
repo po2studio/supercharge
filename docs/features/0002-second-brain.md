@@ -22,7 +22,7 @@ Hard requirements (owner, 2026-11-03):
   - first-run setup: the brain's location, then the download with its size and checksum, then the first index;
   - agentic hybrid search: the agent picks terms and/or a plain-language description, filters, and refines, in a scout on `smol`, answering with citations and dates;
   - the brain repo's CI.
-- **Decisions** in the brain: `plan-feature` searches before it asks and records the human's answers, `adr` writes there, and `living-docs` harvests decisions at ship.
+- **Decisions** in the brain: `supercharge` searches before it asks and records the human's answers, `adr` writes there, and `living-docs` harvests decisions at ship.
 - **Notes** distilled from raw files by `living-docs`, each citing its sources by hash, so a change in a source marks the note stale. A lint pass keeps, updates, merges, replaces or deletes.
 - **Checks:** `brain check` in the brain repo's CI, plus the PR check in `build-slice`: decisions and notes whose `touches:` match the changed paths.
 - **Project docs defer to the brain:** BUSINESS.md and ADRs move there. PRODUCT.md and ARCHITECTURE.md stay per project.
@@ -33,7 +33,7 @@ Hard requirements (owner, 2026-11-03):
 1. On a machine with only omp and the skills, `/brain <question>` with nothing configured asks where the brain is and shows the download size. On `go` it downloads and checks the binary, indexes, and answers with cited sources. No API key, nothing else installed.
 2. Any file a person drops into the brain is indexed or reported as unconverted, including flat text with no structure, PDFs, Office files, email, CSV and Icelandic text. Nothing in it is ever edited by an agent.
 3. A question that shares no words with its answer finds it. A question with an exact term (an ID, a name) finds that.
-4. A business rule decided in an earlier `plan-feature` is cited, not asked again. A superseded decision never comes back as current.
+4. A business rule decided in an earlier `supercharge` session is cited, not asked again. A superseded decision never comes back as current.
 5. When a raw source changes, the notes built from it show as stale until `living-docs` refreshes them.
 6. A PR that changes code a decision or note `touches:` either updates it or says `brain: unchanged` in its body. The brain repo's CI runs `brain check`.
 7. The eval runs in CI. Hybrid search beats full-text alone on it, and a regression fails CI.
@@ -41,7 +41,7 @@ Hard requirements (owner, 2026-11-03):
 9. With no brain configured, every skill behaves as it does today.
 
 ## Core flows
-Adds **Ask the brain** (`/brain <question>`, first-run setup included) to [PRODUCT.md](../PRODUCT.md). Changes **Plan a request** (search the brain before asking, record the answers), **Build a slice or ticket** (the brain check before the PR) and **Build a feature** (the finish harvests decisions and refreshes notes). The README gets a Brain section.
+Adds **Ask the brain** (`/brain <question>`, first-run setup included) to [PRODUCT.md](../PRODUCT.md). Changes **Start a request** (search the brain before asking, record the answers), **Build a slice or ticket** (the brain check before the PR) and **Build a feature** (the finish harvests decisions and refreshes notes). The README gets a Brain section.
 
 ## Out of scope
 - Access control and sensitive content (owner: not part of this).
@@ -156,7 +156,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 Related ticket, not part of this feature: [#24](https://github.com/po2studio/supercharge/issues/24) (`living-docs` asks for every config key on first run).
 
 ## Notes for the builder
-- AGENTS.md: `risk: medium`, `approve: [merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`, which also checks relative links in every `.md` file, so eval corpus files must pass it or be excluded by the check.
+- AGENTS.md: `risk: medium`, `approve: [plan, merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`, which also checks relative links in every `.md` file, so eval corpus files must pass it or be excluded by the check.
 - **Smoke runs:** "no smoke run for skill changes" covers skill text only. The binary gets tests, real runs and the eval. Skill-text changes are verified by review against the criteria.
 - Every line in a skill should change behaviour. Keep skill additions short and in the existing voice.
 

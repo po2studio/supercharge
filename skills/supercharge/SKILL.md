@@ -1,15 +1,26 @@
 ---
-name: plan-feature
-description: Turn a request, idea or spec into a planned feature — triage it, write docs/features/NNNN-*.md with deliverables and acceptance criteria, and split it into vertical slices, on GitHub a feature issue with the slices as its sub-issues. Use when someone wants something built that is bigger than a quick fix.
+name: supercharge
+description: The entry point for any request in a project — an idea, a bug, a change or a feature. Sets the project up on first use, brainstorms when the direction is open, triages and plans new work (a fix done now, a ticket, or a feature doc with a GitHub feature issue and its slices as sub-issues), and hands planned work to drive-feature or build-slice.
 ---
 
-# plan-feature
+# supercharge
 
-Turn a request into something an agent can build and a human can check.
+Take any request to its right next step, and turn new work into something an agent can build and a human can check.
 
-Only plan: don't write code. Building happens in `build-slice` or `drive-feature`. The one exception is the `direct` route below.
+Only route and plan: don't write code. Building happens in `build-slice` or `drive-feature`. The one exception is the `direct` route below.
 
 `docs/` here means the folder set by `docs` in `AGENTS.md` (default `docs`).
+
+## Route the request
+
+Read `AGENTS.md`, then say which route you chose:
+- **Not set up** (no config block in `AGENTS.md` under `## Supercharge` or the old `## Sprengikraftur`): run `living-docs`, drafting on its defaults so its questions and the docs it wrote go to the human in one stop. On `go`, go on with the request.
+- **Direction open, or the human asks to explore:** brainstorm with them until they settle the direction: options, tradeoffs, what you'd pick and why. Write nothing and create no issues before then. Then triage what they settled. If it ends in "not now", write nothing.
+- **New work:** triage and plan it, below.
+- **Planned work** (an issue, a feature doc, "build feature 3, two at a time"): hand it to `drive-feature` for a feature, `build-slice` for a slice or ticket, with the human's words.
+- **Drifted docs:** hand them to `living-docs`.
+
+If the config block lacks a key, ask for it in the request's batch of questions, with the default `living-docs` gives, and write the answer into the block.
 
 ## Triage first
 
@@ -62,6 +73,6 @@ Once the plan is final (after `go` at any `spec` or `plan` stop), create the iss
 - Start from whatever exists, from a one-line idea to a full spec. What they wrote is binding; fill only the gaps.
 - Ask about business rules the docs don't settle (what gets recorded, money, who can do what, what users see), as far as `risk` says. `low`: only when you can't go on without an answer. `medium`: where a wrong guess records wrong data or is hard to undo. `high`: any rule that isn't written down. Never guess silently: whatever you don't ask goes in the doc as an assumption.
 - Decide technical questions yourself and record them in the doc. Architecture, and anything that commits outside the codebase (a new service, cost, data leaving the system), goes in a `proposed` ADR, and accepting it is one of the questions in the batch: on `go`, set it `accepted`.
-- Ask in one batch, each question with your default; replying `go` accepts them all. If `approve` includes `spec` or `plan`, put the questions in that stop instead of stopping twice.
+- Ask in one batch, each question with your default; replying `go` accepts them all. A brainstorm is the exception: a conversation, until the human settles the direction. If `approve` includes `spec` or `plan`, put the questions in that stop instead of stopping twice.
 - Read `approve` from `AGENTS.md` when you get there; the human may have changed it. If it includes `spec`, stop once the deliverables and acceptance criteria are written, before slicing. If it includes `plan`, stop once the slices are planned, before building. At a stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
-- Otherwise go straight on: `build-slice` for a ticket, `drive-feature` for a feature.
+- Then a ticket goes straight on to `build-slice` in this session. A feature doesn't: once its doc is on `main`, end the session with a stop that gives each feature issue and says to start it from Orca (or run `/drive-feature <its URL>`; with no tracker, `/drive-feature <its feature doc>`) in a fresh session.
