@@ -14,11 +14,11 @@ Only route and plan: don't write code. Building happens in `build-slice` or `dri
 ## Route the request
 
 Read `AGENTS.md`, then say which route you chose:
-- **Not set up** (no `## Supercharge` config block in `AGENTS.md`): run `living-docs`, drafting on its defaults so its questions and the docs it wrote go to the human in one stop. On `go`, go on with the request.
+- **Not set up** (no `## Supercharge` config block in `AGENTS.md`): run `living-docs` yourself, drafting on its defaults so its questions and the docs it wrote go to the human in one stop. On `go`, go on with the request.
 - **Direction open, or the human asks to explore:** brainstorm with them until they settle the direction: options, tradeoffs, what you'd pick and why. Write nothing and create no issues before then. Then triage what they settled. If it ends in "not now", write nothing.
 - **New work:** triage and plan it, below.
 - **Planned work** (an issue, a feature doc, "build feature 3, two at a time"): hand it to `drive-feature` for a feature, `build-slice` for a slice or ticket, with the human's words.
-- **Drifted docs:** hand them to `living-docs`.
+- **Drifted docs:** run `living-docs` yourself, not in a subagent.
 
 If the config block lacks a key, ask for it in the request's batch of questions, with the default `living-docs` gives, and write the answer into the block.
 

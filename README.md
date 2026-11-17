@@ -150,7 +150,7 @@ Where the docs, ADRs and feature docs live; every `docs/` path in the skills and
    - **Direction open, or you ask to explore:** it brainstorms with you, back and forth, and writes nothing until you settle the direction. "Not now" ends it with nothing written.
    - **New work:** small things are done directly (no issue, no planning stop, but built in a builder subagent and reviewed on a different model); a ticket gets one issue and is built the same way; bigger work gets a feature doc, plus a GitHub feature issue with the slices as its sub-issues. The doc reaches `main` on its own PR, which the agent merges without waiting for `merge`, so a session started from any of the issues can read it.
    - **Planned work** (an issue, a feature doc, "build feature 3, two at a time"): it hands it to `drive-feature` or `build-slice`.
-   - **Drifted docs:** it hands them to `living-docs`.
+   - **Drifted docs:** it runs `living-docs` in the session.
 3. **Do what each stop says.** Answer its questions (`go` accepts the defaults), check the plan if `plan` is in `approve`, and approve the PR into `main` with `go`. The agent merges it, and the docs are already current. A feature ends the planning session: start its issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. When a request is finished, start a new session for the next one.
 
 Every issue the bundle creates starts with the command that builds it, so you can start work from Orca's issue list. Filter it with `is:open label:feature` for the features, `is:open label:ready-for-agent -label:slice` for everything you can start at the top level (features and tickets), or `label:feature:NNNN` for one feature and its slices. Each slice also links to its feature issue.
@@ -182,11 +182,11 @@ Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`,
 
 There are three jobs, and they need different things:
 
-- **Planning** (`supercharge`, `living-docs`): judgement about the business, such as which questions to ask, safe defaults, and checking facts. It uses few tokens, so use the strongest model you have.
+- **Planning** (`supercharge`, `living-docs`): judgement about the business, such as which questions to ask, safe defaults, and checking facts. It uses few tokens, so use the strongest model you have. `living-docs` always runs in the session, on this model, never in a builder subagent.
 - **Building** (`build-slice`): good technical judgement. It uses most of the tokens, so this is where a cheaper model pays off. A slice or ticket started from its issue is built in a builder subagent too, so the session's model doesn't build.
 - **Reviewing** (omp's `reviewer` agent, or a fresh subagent in Claude Code): an independent check. Always a different model from the builder, ideally from a different company. It's cheap.
 
-Each job runs on an omp model role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`scout` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
+In omp the agent picks the agent (`task`, `reviewer`, `scout`), never the model: omp's model roles set each agent's model. Each job runs on a role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`scout` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
 
 ```yaml
 modelRoles:

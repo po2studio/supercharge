@@ -12,7 +12,7 @@ Developers and owners building software with strong LLM agents in omp or Claude 
    - **direction open, or the human asks to explore:** a brainstorm with the human; nothing is written and no issue created until they settle the direction, and "not now" writes nothing;
    - **new work:** triaged as direct (done now by a builder subagent and reviewed on a different model, with no issue and no planning stop, on its own PR), a ticket (one issue, built in a builder subagent and reviewed on a different model) or a feature (a feature doc, a feature issue, and the slices as sub-issues), with one batch of business questions and the stops `approve` sets. A feature doc reaches `main` on its own PR, and the session ends with a stop saying to start the feature issue in a fresh session;
    - **planned work:** handed to `drive-feature` or `build-slice`;
-   - **drifted docs:** handed to `living-docs`.
+   - **drifted docs:** `living-docs` runs in the session, on the planning model.
 2. **Build a feature:** start the feature issue, or run `/drive-feature <issue URL or doc>`. `build-slice` subagents build the slices, in parallel where the doc allows. The finish refreshes the docs, sets the status to `shipped`, and opens one PR into `main`.
 3. **Build a slice or ticket:** start its issue, or run `/build-slice <issue URL>`: a builder subagent builds it, tests first, run for real, reviewed by a different model, then a PR with green CI that closes the issue; the session relays the stop.
 
