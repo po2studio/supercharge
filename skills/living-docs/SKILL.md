@@ -7,7 +7,7 @@ description: Create or refresh a project's living docs — AGENTS.md plus docs/B
 
 Give any agent arriving cold what it needs to work well, in as few words as possible.
 
-Only write docs: don't plan or build.
+Only write docs: don't plan or build. It needs judgement, so run it in the session on the planning model, never in a builder subagent.
 
 ## The docs
 
