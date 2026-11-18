@@ -29,7 +29,7 @@ A request may hold several unrelated changes; triage and plan each on its own. C
 - **ticket:** one slice. A single issue with acceptance criteria.
 - **feature:** anything bigger, or touching money, auth, deleting data, the data model, or a new external service.
 
-A request about a feature that has shipped is new work: triage it on its own, and don't reopen the feature or its issues.
+A request about a shipped feature is new work: don't reopen the feature or its issues.
 
 Then ask: **does this change the architecture?** A new component, storage, service or deployment shape, or a change across the codebase (auth, background jobs). If so, decide it before slicing: ADRs (use the `adr` skill) and `docs/ARCHITECTURE.md`, then make the first slice a thin path through the new structure, end to end. Usually the answer is no, in one line.
 
@@ -38,7 +38,7 @@ Then ask: **does this change the architecture?** A new component, storage, servi
 `docs/features/NNNN-short-slug.md`. Cover:
 - **why:** the problem and who has it
 - **deliverables:** what will exist when it's done; each appears in some slice's "touches"
-- **acceptance criteria:** observable and testable
+- **acceptance criteria:** what someone can observe; files and modules only under a slice's touches
 - **core flows:** which flows in `docs/PRODUCT.md` the feature adds or changes, or none
 - **out of scope**
 - **risk:** inherits the project default; any override needs a reason
@@ -51,7 +51,7 @@ Describe what and why; leave the how to the builder.
 ## Slices
 
 - Each slice is vertical: it works end to end and delivers something observable.
-- Size slices by what they deliver, not by count. One slice is fine; so is ten.
+- Size slices by what they deliver, not by count.
 - Before slicing, settle in the feature doc any rule that several slices share (how a value is parsed, shown or checked), asking as below, so slices built in parallel don't each invent their own.
 - Where two cuts are equally vertical, choose the one that lets more slices be built together. Never give up verticality for it: no slice becomes a layer (only the schema, only the API) to free up another.
 - If the feature adds or changes a core flow and the project has no end-to-end harness through the surface users use (as `build-slice` defines it), the first slice that touches a core flow sets it up and records how to run it in `AGENTS.md`: put that in its acceptance criteria and size it for that.
@@ -60,10 +60,10 @@ Describe what and why; leave the how to the builder.
 
 ## Issues
 
-Create issues with `gh` (omp's `github` tool can't create them; in Claude Code, `gh` is the GitHub tool). Each body starts with the command that builds it (edit the URL in once the issue exists), so a session started from the issue runs the right skill.
-- **Feature:** one issue labelled `feature`, `feature:NNNN` and `ready-for-agent`, starting `/drive-feature <its URL>`, then a short summary and a link to the feature doc. Don't copy the deliverables or acceptance criteria; the doc stays the truth.
+Create issues with `gh` (omp's `github` tool can't create them; in Claude Code, `gh` is the GitHub tool). Write a feature issue and a ticket from `docs/issue-template.md` if the project has one, else `issue-template.md` beside this skill. Whatever it says, the body starts with the command that builds it (edit the URL in once the issue exists), a ticket has acceptance criteria, and a feature issue links its feature doc and copies no deliverables or criteria. Titles state the outcome, with no number or "Feature"/"slice" prefix.
+- **Feature:** one issue labelled `feature`, `feature:NNNN` and `ready-for-agent`, starting `/drive-feature <its URL>`.
 - **Slices:** each a sub-issue of it (`gh issue create --parent`), labelled `slice`, `feature:NNNN` and `ready-for-agent`, starting `/build-slice <its URL>`, then a link to the feature issue, its acceptance criteria, dependencies, the slices it can be built with, and what it touches.
-- **Ticket:** one issue labelled only `ready-for-agent`, starting `/build-slice <its URL>`, then its acceptance criteria.
+- **Ticket:** one issue labelled only `ready-for-agent`, starting `/build-slice <its URL>`.
 
 With no issue tracker, list the slices in the feature doc.
 
@@ -71,7 +71,7 @@ Once the plan is final (after `go` at any `spec` or `plan` stop), create the iss
 
 ## Working with the human
 
-- Start from whatever exists, from a one-line idea to a full spec. What they wrote is binding; fill only the gaps.
+- Start from whatever exists. What they wrote is binding; fill only the gaps.
 - Ask about business rules the docs don't settle (what gets recorded, money, who can do what, what users see) only as far as `risk` says: `low`, when you can't go on without an answer; `medium`, where a wrong guess records wrong data or is hard to undo; `high`, any rule that isn't written down. Never guess silently: whatever you don't ask goes in the doc as an assumption.
 - Decide technical questions yourself and record them in the doc. Architecture, and anything that commits outside the codebase (a new service, cost, data leaving the system), goes in a `proposed` ADR, and accepting it is one of the questions in the batch: on `go`, set it `accepted`.
 - Ask in one batch, each question with your default; replying `go` accepts them all. A brainstorm is the exception: a conversation, until the human settles the direction. If `approve` includes `spec` or `plan`, put the questions in that stop instead of stopping twice.

@@ -153,7 +153,7 @@ Where the docs, ADRs and feature docs live; every `docs/` path in the skills and
    - **Drifted docs:** it runs `living-docs` in the session.
 3. **Do what each stop says.** Answer its questions (`go` accepts the defaults), check the plan if `plan` is in `approve`, and approve the PR into `main` with `go`. The agent merges it, and the docs are already current. A feature ends the planning session: start its issue from Orca, or run `/drive-feature <its URL>`, in a fresh session. When a request is finished, start a new session for the next one.
 
-Every issue the bundle creates starts with the command that builds it, so you can start work from Orca's issue list. Filter it with `is:open label:feature` for the features, `is:open label:ready-for-agent -label:slice` for everything you can start at the top level (features and tickets), or `label:feature:NNNN` for one feature and its slices. Each slice also links to its feature issue.
+Every issue the bundle creates starts with the command that builds it, so you can start work from Orca's issue list. It's written for you first, then the builder: a ticket has why (the problem and who has it), what changes for them, acceptance criteria (what you can observe), how to check it, what's out of scope, and last what it touches. Titles state the outcome. A feature issue has the why, what changes and a link to the feature doc, which holds the criteria. To change the format, put your own `docs/issue-template.md` in the project (in the folder `docs` names): it replaces the default, `skills/supercharge/issue-template.md`, whole. Every issue still starts with the build command, a ticket has acceptance criteria, and a feature issue links its doc and copies no criteria. Filter the list with `is:open label:feature` for the features, `is:open label:ready-for-agent -label:slice` for everything you can start at the top level (features and tickets), or `label:feature:NNNN` for one feature and its slices. Each slice also links to its feature issue.
 
 To build an existing plan:
 - **In one session:** start the feature issue from Orca, or run `/drive-feature <feature issue URL or docs/features/NNNN-*.md>`, in omp or Claude Code. It builds the slices the plan marks as buildable together in parallel, and the rest in dependency order, closes each slice's issue as it merges, and the final PR closes the feature issue. To check as you go, or to build fewer at once, add a limit in plain words. It stops after each batch on the feature branch, and `go` starts the next. For example:
@@ -169,7 +169,7 @@ To build an existing plan:
 
 | Skill | Does |
 |---|---|
-| `supercharge` | The entry point for any request: sets the project up, brainstorms, triages, then a ticket or `docs/features/NNNN-*.md` plus a feature issue with its slices as sub-issues, and hands planned work to `drive-feature` or `build-slice` |
+| `supercharge` | The entry point for any request: sets the project up, brainstorms, triages, then a ticket or `docs/features/NNNN-*.md` plus a feature issue with its slices as sub-issues, written from an issue template, and hands planned work to `drive-feature` or `build-slice` |
 | `living-docs` | Creates or refreshes `AGENTS.md` and `docs/{BUSINESS,PRODUCT,ARCHITECTURE,DESIGN}.md` (BUSINESS and DESIGN are optional) |
 | `adr` | Records a decision in `docs/adr/NNNN-*.md` |
 | `build-slice` | Builds one slice to done: tests, end-to-end check, review, PR, green CI, docs updated |
