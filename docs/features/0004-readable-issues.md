@@ -93,7 +93,7 @@ Medium (default). A wrong word in a skill loses something silently: an older fea
 
 ## Slices
 1 first; 2 after 1. Both rewrite the Issues section of `supercharge` and the README's Usage, so they aren't built together.
-- [ ] 1: Issues a human can read, from a template a project can edit
+- [x] 1: Issues a human can read, from a template a project can edit
 - [ ] 2: A feature is one issue, with its progress on it
 
 ### Slice 1: Issues a human can read, from a template a project can edit
