@@ -1,6 +1,6 @@
 # 0004: Issues a human can read: one per feature, written from a template
 
-Feature issue: [#58](https://github.com/po2studio/supercharge/issues/58). Status: **planned**.
+Feature issue: [#58](https://github.com/po2studio/supercharge/issues/58). Status: **shipped**.
 
 ## Why
 The owner plans in the session but reads and starts work from the issue list (GitHub, Orca). The issues the bundle writes don't serve that:
