@@ -1,6 +1,6 @@
 # 0004: Issues a human can read: one per feature, written from a template
 
-Feature issue: [#58](https://github.com/po2studio/supercharge/issues/58). Status: **planned**.
+Feature issue: [#58](https://github.com/po2studio/supercharge/issues/58). Status: **shipped**.
 
 ## Why
 The owner plans in the session but reads and starts work from the issue list (GitHub, Orca). The issues the bundle writes don't serve that:
@@ -93,8 +93,8 @@ Medium (default). A wrong word in a skill loses something silently: an older fea
 
 ## Slices
 1 first; 2 after 1. Both rewrite the Issues section of `supercharge` and the README's Usage, so they aren't built together.
-- [ ] 1: Issues a human can read, from a template a project can edit
-- [ ] 2: A feature is one issue, with its progress on it
+- [x] 1: Issues a human can read, from a template a project can edit
+- [x] 2: A feature is one issue, with its progress on it
 
 ### Slice 1: Issues a human can read, from a template a project can edit
 **Acceptance criteria** (feature AC 1, 3, 4, and 2 without the checklist)

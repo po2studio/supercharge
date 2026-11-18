@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Supercharge is a skill bundle for omp and Claude Code. The skills are `skills/*/SKILL.md`; `README.md` is the user-facing doc; `runs/` holds write-ups of real runs.
+Supercharge is a skill bundle for omp and Claude Code. The skills are `skills/*/SKILL.md` (`skills/supercharge/` also holds `issue-template.md`, the default issue format, which a project's own `docs/issue-template.md` replaces); `README.md` is the user-facing doc; `runs/` holds write-ups of real runs. A feature is one GitHub issue whose slice checklist is its progress record; features planned earlier with sub-issues still build (see the Issues rule in PRODUCT).
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): what the bundle does, its core flows and rules
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it's built and distributed
