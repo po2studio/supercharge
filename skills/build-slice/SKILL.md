@@ -9,7 +9,9 @@ Ship one slice so it's verifiably done and the docs still tell the truth.
 
 Build only this slice. Anything else you notice goes in the report. A one-issue feature's slice (its feature issue has no sub-issues) is built only when `drive-feature` runs you; otherwise say so, and stop.
 
-If you're the session, not a subagent, hand this slice to a fresh builder subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`), with the issue URL, and run this skill there. Relay its questions and `proposed` ADRs to the human and the answers back, relay its stop, and on `go` merge and clean up as below. The rest is for the builder; a subagent builds itself.
+If you're the session, not a subagent, hand this slice to a fresh builder subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`), with the issue URL, and run this skill there. Relay its questions and `proposed` ADRs to the human and the answers back, relay its stop, and on `go` merge and clean up as below.
+
+In Orca (`ORCA_CLI_COMMAND` is set; never run a bare `orca` elsewhere: on Linux it's a screen reader), whoever starts a builder, you or `drive-feature`, first creates its worktree through Orca, so the slice shows under the session's worktree in Orca's sidebar: `"$ORCA_CLI_COMMAND" worktree create --name <slice> --parent-worktree active --base-branch <the feature branch, or main for a ticket> --branch <slice branch> --setup skip --json`, without `--activate`. Point the builder at the path it returns, instead of `task` isolation or Claude Code's `isolation: "worktree"`, and remove the worktree through Orca once it's merged (`worktree rm --worktree <id> --json`). Outside Orca nothing changes. The rest is for the builder; a subagent builds itself.
 
 `docs/` here means the folder set by `docs` in `AGENTS.md` (default `docs`).
 
@@ -34,7 +36,7 @@ If you're the session, not a subagent, hand this slice to a fresh builder subage
 - If CI exceeds `ci_budget`, open an issue to speed it up, unless one is already open.
 - Don't build compatibility for data, users or releases that don't exist yet.
 - If the same failure or review finding survives three fixes, stop and say so.
-- Merge into a feature branch yourself. A PR into `main` waits for the human's approval if `approve` includes `merge`; once they approve, check CI is green and merge it yourself. Then delete this slice's branch and any worktree you added for it, once everything in them is merged: never anything else, never anything holding unmerged work, and never the worktree your own session runs in or the branch checked out there. Keep a worktree that isn't merged, and say where it is in the report. At the stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
+- Merge into a feature branch yourself. A PR into `main` waits for the human's approval if `approve` includes `merge`; once they approve, check CI is green and merge it yourself. Then delete this slice's branch and any worktree added for it (in Orca through `worktree rm`, not `git worktree remove`), once everything in them is merged: never anything else, never anything holding unmerged work, and never the worktree your own session runs in or the branch checked out there. Keep a worktree that isn't merged, and say where it is in the report. At the stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
 - Unless `drive-feature` runs you, if every other slice of its feature is done, end your stop and report with: start feature issue #N in Orca (or run `/drive-feature <its URL>`) to finish. `drive-feature` skips the done slices and only does the finish.
 - Don't work around security controls (commit signing, auth, hooks). Stop and say so.
 - If a feature named here isn't available, use an equivalent, or stop and say so. No equivalent replaces "not a fork" or "a different model".

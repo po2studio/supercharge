@@ -66,7 +66,7 @@ flowchart TB
     PR2 & PR1 & PR3 & PR4 -->|"you: go"| M["main"]
 ```
 
-Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per request, which hands a direct change or a ticket to a builder subagent; each feature gets a fresh session of its own, one subagent per slice, each in its own worktree. Every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions and check the plan at the start, and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp or Claude Code sessions side by side, started with the issue URLs.
+Each slice: acceptance tests first, built, run for real, reviewed by a different model, PR with green CI. One session per request, which hands a direct change or a ticket to a builder subagent; each feature gets a fresh session of its own, one subagent per slice, each in its own worktree (in Orca, created through Orca as a child of the session's worktree, so slices nest under the feature in the sidebar). Every issue starts with the command that builds it, so starting it from the ADE's issue list is the whole handoff. You answer one batch of questions and check the plan at the start, and reply `go` at the end; the docs on `main` carry the context between sessions. Without an ADE, it's several omp or Claude Code sessions side by side, started with the issue URLs.
 
 ## Install
 
@@ -118,7 +118,7 @@ Everything runs on its own except the steps listed in `approve`. At each one the
 | `spec` | After the feature doc's deliverables and acceptance criteria, before slicing | Check *what* gets built. Reply `go` or say what to change | It plans the slices |
 | `plan` | After the slices are planned, before building | Check what gets built and how it's cut. Reply `go` or say what to change | It creates the issues. A ticket is built in a builder subagent, reviewed on a different model; a feature is built once you start its issue in a fresh session |
 | `slice` | After each slice, or each batch built together, is built, reviewed and merged into the feature branch | Try it: the stop says how to run it and what to check. Reply `go` or report a problem | It fixes the problem, or starts the next slice |
-| `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches and worktrees its agents created, never the one your session runs in. The feature is done |
+| `merge` | After every slice is done and the docs are refreshed on the feature branch | Review the one PR (or branch) into `main` and its checklist of human-only checks. Reply `go` | It checks CI, merges into `main` and cleans up the branches and worktrees its agents created (in Orca, through Orca), never the one your session runs in. The feature is done |
 
 - **`[plan, merge]` (default):** you check what gets built and how it's cut before any code is written, then see the finished feature. It catches wrong guesses about the product early, which matters most with models that don't ask questions (see [run 4](runs/2026-10-14-receipt-scanner-cheap-models.md)).
 - **`[merge]`:** you only see the finished feature.
