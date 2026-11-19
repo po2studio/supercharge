@@ -25,7 +25,7 @@ If the config block lacks a key, ask for it in the request's batch of questions,
 ## Triage first
 
 A request may hold several unrelated changes; triage and plan each on its own. Choose the lightest route that's safe, and say which you chose:
-- **direct:** small, low-risk and obvious. No issue and no planning stop, nothing else skipped: `build-slice` builds it in a fresh subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`), given the request and one to three acceptance criteria you write, with the same independent review and docs rule. Its PR into `main` waits for `go` if `approve` includes `merge`; on `go` merge per `build-slice`'s rule.
+- **direct:** small, low-risk and obvious. No issue and no planning stop, nothing else skipped: `build-slice` builds it in a fresh subagent, not a fork (in omp a `task` subagent; in Claude Code, model `sonnet`; in Orca, in the worktree `build-slice` has you create first), given the request and one to three acceptance criteria you write, with the same independent review and docs rule. Its PR into `main` waits for `go` if `approve` includes `merge`; on `go` merge per `build-slice`'s rule.
 - **ticket:** one slice. A single issue with acceptance criteria.
 - **feature:** anything bigger, or touching money, auth, deleting data, the data model, or a new external service.
 
