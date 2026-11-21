@@ -162,7 +162,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   - notes are written on demand from answers, never by turning raw files into notes wholesale; `/brain refresh` only lints;
   - the brain's path is global (`~/.config/supercharge/brain`) with `brain:` as a per-project override; nothing per machine goes into the root;
   - BUSINESS.md stays in the project and is indexed in place, like ADRs; moving it into notes would have left every note stale;
-  - `INDEX.md` and Windows are cut; the 1M-chunk bench moves to the big-brains slice; slice 6 folds into slice 3;
+  - `INDEX.md` and Windows are cut; the 1M-chunk bench moves to the big-brains slice; the slice that moved BUSINESS.md into notes folds into the decisions slice (3);
   - the other skills carry one line each about the brain; the `brain` skill owns the rest.
 - **Default model `multilingual-e5-small`, int8 (MIT).** Measured on a Ryzen 7 5700G with ONNX Runtime int8:
 
@@ -171,10 +171,11 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   | multilingual-e5-small | 12.5 | 16.1 |
   | bge-small-en-v1.5 (English-only) | 17.3 | 9.8 (Icelandic overflowed 512 tokens) |
 
-  Supporting other languages costs no speed at this size. EmbeddingGemma 2 (Apache 2.0, 270M text) is estimated at 3–5× slower; slice 8 decides with the full eval.
+  Supporting other languages costs no speed at this size. EmbeddingGemma 2 (Apache 2.0, 270M text) is estimated at 3–5× slower; slice 7 decides with the full eval.
 - **Brute force, no approximate-nearest-neighbour index.** 50k × 256-dim cosine took 14 ms even in JS. A 1-bit first pass plus int8 rescoring covers the 1M wall without a graph to build or keep in memory.
 - **Distribution:** the skills CLI (vercel-labs/skills) copies the whole skill folder and has no install hook. It shows only the `description` (as a hint cut at 57 characters, and in full in a panel), so that's where the size goes, and first-run setup repeats it before downloading.
 - **The PR check runs in skills, not in project CI.** Project CI would need a token for the brain repo. `build-slice` runs `brain check --changed` before opening its PR, and the brain repo's own CI runs `brain check`.
+- **Owner, 2026-11-21:** replanned in the one-issue format of feature [0004](0004-readable-issues.md). The slice issues #16–#20, #22 and #23 are closed; their criteria, risks and touches are below, unchanged, and [#15](https://github.com/po2studio/supercharge/issues/15) carries the checklist. Two titles now state the outcome: slice 5 (was "Checks: nothing touched goes unreviewed") and slice 7 (was "Model bake-off on the full eval").
 - *Assumptions, not asked:*
   - writing to the brain means a direct commit and push, gated by the admission rule, lint and `check`, not by a second human approval;
   - the eval corpus is synthetic and committed here. A run on the owner's real corpus happens outside the repo, with only the numbers going into `runs/`;
@@ -182,18 +183,169 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   - a team shares one brain, so `brain:` in a committed AGENTS.md is a relative path or a path every member has (`~/brain`).
 
 ## Slices
-1 first. Then 2 and 3 together. 4 after 3. 5 after 4. 7 after 5. 8 last, once the corpus is complete. (The bundle ticket [#49](https://github.com/po2studio/supercharge/issues/49) that 1, 3 and 5 build on has shipped.)
-- [ ] [#16](https://github.com/po2studio/supercharge/issues/16): Point at a folder, ask why, get a cited answer
-- [ ] [#17](https://github.com/po2studio/supercharge/issues/17): Any file goes in
-- [ ] [#18](https://github.com/po2studio/supercharge/issues/18): Decisions are recorded where they're made and found before anyone asks (includes what was slice 6, [#21](https://github.com/po2studio/supercharge/issues/21), closed)
-- [ ] [#19](https://github.com/po2studio/supercharge/issues/19): Notes stay true
-- [ ] [#20](https://github.com/po2studio/supercharge/issues/20): Checks: nothing touched goes unreviewed
-- [ ] [#22](https://github.com/po2studio/supercharge/issues/22): Big brains: build the index once, everyone pulls
-- [ ] [#23](https://github.com/po2studio/supercharge/issues/23): Model bake-off on the full eval
+1 first. Then 2 and 3 together. 4 after 3. 5 after 4. 6 after 5. 7 last, once the corpus is complete. (The bundle ticket [#49](https://github.com/po2studio/supercharge/issues/49) that 1, 3 and 5 build on has shipped.)
+
+### Slice 1: Point at a folder, ask why, get a cited answer
+**Delivers** the thinnest path through the whole thing: install the skills, run `/brain <question>`, answer two questions (where the brain lives, and whether to download, with the size shown), and get an answer with citations from a folder of markdown and text files. It also sets up everything later slices build on:
+- **The `brain/` Rust crate:** `index`, `search`, `stats`, `eval`; chunker v1; `multilingual-e5-small` int8 compiled in; one SQLite file under `~/.cache/supercharge/index/<root-hash>/` with FTS5, int8 vectors and 1-bit codes; hybrid search fused by rank (RRF); incremental indexing by content hash.
+- **Release workflow:** a `brain-v*` tag builds the 4 platforms and uploads binaries plus sha256.
+- **Rust CI:** tests, clippy and `brain eval`, run only when `brain/` changes.
+- **The `brain` skill** (`skills/brain/SKILL.md` and `brain.json`):
+  - first-run setup: location, written to `~/.config/supercharge/brain` (a `brain:` key in AGENTS.md overrides it, but setup never writes one); consent with the size; download; checksum; cache; layout created if missing; first index;
+  - agentic search in a scout (omp's `scout` on `smol`; in Claude Code a fresh subagent on `haiku`): the agent picks terms and/or a description, reads snippets, refines, and answers in ≤ 10 lines with paths and dates;
+  - its description states the download size.
+- **Eval v1:** markdown and text corpus, including flat text, Icelandic, and a pair with no shared words.
+- **A `runs/` write-up:** agent-level accuracy, tokens and time per question, against an agent grepping the same folder without the brain.
+- **This repo's AGENTS.md** says what the repo now is and adds the Rust checks. `scripts/check.py` also fails a skill description over 57 characters before its first full stop, or over 1024 in total. **README:** a Brain section (install size, setup, search), the optional `brain` config key in Config, and in Models what the scout runs on in each harness. **The README's Philosophy** ("nothing beyond `git` and `gh`", "read it all in one sitting", "five skills") **and `docs/ARCHITECTURE.md`** ("no code to run") are rewritten for a bundle whose optional `brain` skill downloads one binary, as ADRs 0001–0003 decide.
+
+**Acceptance criteria** (feature AC 1, 3, 7, 9, and 2 for flat text)
+1. On a machine with only omp or Claude Code and the skills, `/brain <question>` with nothing configured:
+   - asks for the location, defaulting to `~/brain`;
+   - shows the download size and cache path, and waits for `go`;
+   - downloads, verifies the sha256, creates the layout, indexes, and answers with cited paths.
+
+   It never asks for an API key, and writes nothing into any project.
+2. A wrong checksum aborts, says so, and runs nothing.
+3. A flat text file with no headings or newlines is indexed and found.
+4. A question that shares no words with its answer file finds it in the top 5. An exact term (an ID or a name) is found with `--terms`. An Icelandic question finds its Icelandic answer.
+5. After one file changes, `brain index` re-embeds only that file's chunks (`stats` shows the count).
+6. `brain eval` prints recall@5, MRR, p50 latency and chunks/s. Hybrid beats `--terms`-only on recall@5. CI fails on a regression against the committed baseline.
+7. The release workflow produces 4 binaries plus checksums. A binary indexes and searches with no network and no other files.
+8. No raw file is ever written by the binary or the skill, and nothing is written into the brain root but `BRAIN.md`, `decisions/`, `notes/` and `projects/`.
+9. The `runs/` write-up compares the brain with plain grep on the same questions.
+10. A project without `brain:` is never asked for it: not by `living-docs`, not by `supercharge` as a missing key.
+11. Nothing in the README's Philosophy or `docs/ARCHITECTURE.md` is made untrue by the binary: both describe the bundle with its optional `brain` skill and its one download, and `ARCHITECTURE.md` links the ADRs.
+
+**Dependencies:** none. **Build with:** nothing.
+**Touches:** `brain/` (new), `skills/brain/` (new), `.github/workflows/`, `scripts/check.py`, AGENTS.md, the README (Philosophy, Brain, Config and Models sections), `docs/ARCHITECTURE.md`, `runs/`.
+**Risks:**
+- Statically linking an inference runtime on all 4 platforms, macOS especially. If one platform can't be done, stop and say so; don't ship fewer platforms silently.
+- e5 needs `query: ` and `passage: ` prefixes.
+- Binary size. Target ≤ 200 MB; the skill description states the real number.
+- This is the biggest slice. If it has to split, split along the steps of the end-to-end path, never into layers.
+
+### Slice 2: Any file goes in
+**Delivers:** whatever people drop into the brain gets indexed.
+- **Conversion to text in the binary:** html, pdf (text layer), docx, xlsx, pptx, odt/ods/odp, rtf, eml/mbox, csv/tsv, json/yaml, and source code. Cached by content hash beside the index under `~/.cache/supercharge/index/<root-hash>/`, never in the brain.
+- **Chunking rules for specific formats:** tables and CSV as row groups, with the header repeated in each; transcripts by speaker turn; email headers as metadata, quoted replies stripped; code blocks kept whole.
+- **Duplicates:** exact copies by hash; near-copies by SimHash (a fingerprint for near-identical text); the newest version ranks, and the others are listed in the hit's `versions`.
+- **Unconvertible files are reported, not errors:** scans, images, audio, video, encrypted files. They're listed by `brain stats`.
+
+**Acceptance criteria** (feature AC 2)
+1. For each format above, an eval question whose answer exists only in a file of that format finds it.
+2. A scanned PDF and an image are listed as unconverted by `brain stats`, and indexing completes.
+3. A corrupt file is skipped and reported, and indexing completes.
+4. Three near-identical versions of a document (`v1`, `v2`, `final_final.docx`) return one hit, the newest, with the others in `versions`.
+5. Running the index again over unchanged files converts nothing.
+6. The eval gets one questions file for formats and one for duplicates. The PR shows before and after, with no regression.
+
+**Dependencies:** after 1. **Build with:** 3.
+**Touches:** `brain/`: the convert, chunk and dedup modules; search only for filtering duplicates out, using the `versions` field from the settled hit shape. `brain/eval/` (new corpus files and question files). README Brain section (formats line).
+**Risks:**
+- PDF text extraction quality on complex layouts. Measure it in the eval, and don't add OCR.
+- Binary size growth from the format libraries.
+
+### Slice 3: Decisions are recorded where they're made and found before anyone asks
+**Delivers:**
+- **Binary:** indexes decision frontmatter; `search` filters by `--kind --project --since --status`; applies the trust order; superseded decisions are hidden unless `--all`, and point to what replaced them; `index --project` (defaulting to the project name rule) indexes the project's `docs/adr/` and `docs/BUSINESS.md` in place, as the settled rule says.
+- **`supercharge`, with a brain** (one line, pointing at `brain`): in any route that asks business questions (ticket, feature, the triage after a brainstorm), searches it before asking and cites the settled ones instead of asking again; after `go`, records each owner decision as a decision file with `decided-by` and `source` set to the issue, and links them from the feature doc instead of repeating them.
+- **`living-docs`, with a brain** (one line): writes no new BUSINESS.md, and leaves an existing one alone. **`adr`** doesn't change.
+- **The ship step, v1** (in the `brain` skill, per the settled rule): after any merge into `main`, in a builder subagent, record the business, product and process decisions the shipped work made that the brain doesn't hold yet (a technical one at that bar is flagged as a missing ADR, not written), then pull with rebase, commit and push the brain. One line each in `supercharge` (after a direct change or ticket merges), `drive-feature` (the finish) and `build-slice` (when it merges into `main` itself) runs it. Slices 4 and 5 add the rest of the ship step.
+
+**Acceptance criteria** (feature AC 4, 9, 11, and 10 for recording decisions)
+1. `supercharge`, asked for a ticket or feature that touches a rule already decided in the brain, cites that decision and doesn't ask the question.
+2. After `go`, every answered business question exists as a decision file with valid frontmatter and a source link, and the feature doc links to it.
+3. Searching a topic whose decision was superseded returns the current decision. The old one appears only with `--all`, marked superseded and pointing to its replacement.
+4. A project's ADRs and BUSINESS.md are found by `brain search` where they are: a superseded ADR only with `--all`, an amended one together with its amendments. Nothing in the project is written by the brain.
+5. After a merge into `main` by any route (direct, ticket, feature, `build-slice` on its own), the ship step records the shipped work's decisions; running it twice records each exactly once. Nothing about code is written to the brain before its merge.
+6. A brainstorm that ends in "not now" writes nothing to the brain.
+7. With a brain, `living-docs` on a project without BUSINESS.md creates none; on one with it, leaves it as it is. Without a brain, its docs are exactly today's.
+8. The eval gets a decisions questions file, including a superseded-decision trap and an amended ADR, and the PR shows before and after.
+
+**Dependencies:** after 1. **Build with:** 2.
+**Touches:** `brain/`: frontmatter metadata, project docs in place, filters, ranking. `skills/brain` (ship step), one line each in `skills/supercharge`, `skills/drive-feature`, `skills/build-slice`, `skills/living-docs`. `brain/eval/`. README Brain section.
+**Risks:** decision bloat. Record only what a future agent would undo or ask about, which is the bar `adr` already uses.
+
+### Slice 4: Notes stay true
+**Delivers:**
+- **Notes on demand** (in the `brain` skill): when a `/brain` answer had to synthesise several files, the scout proposes a note and a builder subagent writes it, following the notes rule: `sources` with hashes, `summary`, `aliases`, `questions`, `verified`. Nothing turns raw files into notes wholesale.
+- **Binary:** `index` marks a note stale when a source's hash changed or the source is gone; stale notes rank below raw files and are flagged in hits; `stats` reports stale notes, notes nothing points to, and duplicates.
+- **Lint** (in the `brain` skill, in a builder subagent): stale notes are refreshed or deleted; contradictions with code or decisions are flagged, not silently fixed; duplicates are merged; each note found ends in one of keep, update, merge, replace, delete. The ship step lints only the stale notes and the entries the changed paths matched; `/brain refresh` lints the whole brain. Neither writes new notes.
+
+**Acceptance criteria** (feature AC 5, without the brain repo's issue)
+1. After a raw source changes, search hits from its notes carry `stale: true` and `stats` lists them.
+2. After the ship step or `/brain refresh`, those notes are refreshed with new hashes and today's `verified`, or deleted, with the reason in the report.
+3. A `/brain` answer that drew on several files produces one note that answers the question next time, ranked first; an answer from one file produces none.
+4. A note whose only source was deleted is removed or flagged.
+5. Two notes covering the same thing are merged by lint.
+6. No note restates how the code works. The reviewer checks this against the notes rule.
+7. The eval gets a notes questions file, including a stale-note trap, and the PR shows before and after.
+8. The PR reports what a note costs (tokens and time) and what a full `/brain refresh` costs on the eval corpus.
+9. The ship step's lint covers only stale notes and the entries the changed paths matched; a full lint runs only on `/brain refresh`.
+
+**Dependencies:** after 3 (the ship step and the metadata module). **Build with:** nothing.
+**Touches:** `skills/brain` (notes, `/brain refresh`, the ship step's lint), `brain/` (note metadata, staleness, stats), `brain/eval/`, README Brain section.
+**Risks:** note bloat and token cost. A note only when an answer needed several files; lint on the cheap model; report the cost.
+
+### Slice 5: Nothing a change touches goes unreviewed
+**Delivers:**
+- **`brain check`** fails (with file and reason) on any of: invalid decision or note frontmatter, including `touches` without `project`; broken links; an accepted decision whose body was edited (checked against git history when the brain is a git repo). Stale notes are a warning, not a failure.
+- **`brain check --changed <paths or commit range> --project <name>`** lists the decisions and notes whose `touches:` match, and warns on entries whose `touches:` match no file in the project (dangling).
+- **`brain` skill:**
+  - when the brain is a GitHub repo, setup adds a CI workflow to it that downloads the pinned binary, runs `brain check`, and keeps one open issue listing stale notes, starting `/brain refresh` (closed once none are left);
+  - the ship step gains: `--changed` over every commit since the project's reconciled commit (`projects/<project>.yaml`), not just the PR's; applying the updates the PRs listed (`drive-feature`'s final PR combines its slices' `brain:` lines); superseding or retargeting dangling entries; recording the new reconciled commit; and ending the report with `brain: N stale, N dangling touches, N duplicates`.
+- **`build-slice`, with a brain** (its one line points at `brain`, which says): before removing or reworking code whose purpose isn't clear from the code or tests, search the brain for why and cite it in the decision ledger; before opening the PR, run `--changed` with the PR's paths, and the PR body lists the matched entries for the ship step to update (a decision by superseding it), or says `brain: unchanged` and why. It writes nothing to the brain itself.
+
+**Acceptance criteria** (feature AC 6, 10, and 5 for the brain repo's issue)
+1. Each failure case above makes `brain check` exit non-zero, naming the file and reason. A stale note only warns.
+2. Editing an accepted decision's body fails `check`. Changing only its `status` or `superseded-by` passes.
+3. In a brain that's a GitHub repo, the setup-added workflow runs `brain check` on push, and keeps exactly one open issue while notes are stale.
+4. A `build-slice` PR that changes a path a decision `touches:` lists it for the ship step (a decision by superseding it) or says `brain: unchanged` with a reason; the ship step applies it after the merge, including from a feature's combined PR.
+5. `build-slice`, asked to remove a field whose reason is recorded only in the brain, finds and cites that decision before acting.
+6. A commit pushed to `main` outside the skills is caught by the next ship step's `--changed`.
+7. A decision whose `touches:` match no file is flagged by `check --project` and superseded or retargeted at the next ship.
+8. Every ship report ends with the brain's health line.
+
+**Dependencies:** after 4. **Build with:** nothing.
+**Touches:** `brain/` (`check`), `skills/brain` (brain-repo CI template, setup, ship step, the `build-slice` rules), README Brain section.
+
+### Slice 6: Big brains: build the index once, everyone pulls
+**Delivers:**
+- **Building and publishing:** the brain repo's CI workflow (from slice 5) also builds the index and publishes it, keyed by the brain commit, the model ID and the binary version. It never contains a project's in-place docs (ADRs, BUSINESS.md).
+- **Fetching:** on a machine with no index, `brain index` fetches the newest prebuilt index matching its model and version, using the GitHub access the bundle already has. Then it embeds only the files that differ, and the project docs of the project it runs from.
+- **Falling back:** with no match, or offline, it builds locally.
+- **`brain bench`:** a synthetic brain at a given chunk count, reporting search p50 and indexing chunks/s.
+
+**Acceptance criteria** (feature AC 8)
+1. On a fresh clone of a brain whose CI has published an index, `brain index` downloads it and embeds only files changed since that commit (`stats` shows the count), plus the current project's ADRs and BUSINESS.md.
+2. An index from a different model or binary version is ignored, and a local build runs.
+3. With no network, indexing builds locally and says why.
+4. On a 100k-document synthetic brain, a fresh machine's first index takes minutes, not hours. Both times go in the PR.
+5. `brain bench` at 1M synthetic chunks: search p50 ≤ 500 ms on a 6-core laptop CPU. Indexing with the default model is at least 12 chunks/s. Both numbers go in the PR.
+
+**Dependencies:** after 5 (same workflow template). **Build with:** nothing.
+**Touches:** `brain/` (fetching the index, `bench`), `skills/brain` (CI template), README Brain section.
+**Risks:** artifact size limits for large indexes. Pick the storage (release assets or Actions artifacts) by measuring.
+
+### Slice 7: The default model is picked on the full eval
+**Delivers:** the full eval corpus (all formats, decisions, notes) run with the default `multilingual-e5-small` and with EmbeddingGemma 2 (text only, 256 dimensions, Apache 2.0), compared on recall@5, MRR, search latency, indexing chunks/s and binary size, on one machine named in the write-up, with the results written up in `runs/`.
+- **Rule:** switch only if recall@5 rises by 5 points or more, and indexing a 1M-doc brain on one machine is still possible with the shared index from slice 6.
+- **If it switches:** release a new binary, update the pins and size in `skills/brain/brain.json` and the skill description, and have indexes rebuild because the model ID changed.
+
+**Acceptance criteria** (the hard requirement: measured)
+1. The `runs/` write-up has a table of both models on every metric, measured on the same machine.
+2. The decision follows the rule, and the write-up says which way it went and why.
+3. If switched: a new release, updated pins and size, and an existing index rebuilds on the next `brain index`.
+4. If not switched: nothing in `brain/` changes except the eval baseline, if the corpus grew.
+
+**Dependencies:** last: after 6, so the corpus is complete and the shared index exists. **Build with:** nothing.
+**Touches:** `brain/` (the embedding module), `skills/brain/brain.json` and its description, the release, `runs/`.
 
 ## Notes for the builder
+- The **Settled rules** above are binding for every slice; the ADRs in `docs/adr/` are the architecture.
 - AGENTS.md: `risk: medium`, `approve: [plan, merge]`. The PR into `main` waits for the owner's `go`. CI runs `python3 scripts/check.py`, which also checks relative links in every `.md` file, so eval corpus files must pass it or be excluded by the check.
 - Claude Code facts (model aliases, subagents, nesting) are in [0003](0003-claude-code.md); check them at code.claude.com/docs again, not from memory. Claude Code stays marked untested until a run is written up in `runs/`.
 - **Smoke runs:** "no smoke run for skill changes" covers skill text only. The binary gets tests, real runs and the eval. Skill-text changes are verified by review against the criteria.
-- Every line in a skill should change behaviour. Keep skill additions short and in the existing voice.
+- Every line in a skill should change behaviour. Keep skill additions short and in the existing voice; `supercharge`, `build-slice`, `drive-feature` and `living-docs` get at most one line each about the brain.
+- With no brain configured, nothing you change may alter today's behaviour.
 
