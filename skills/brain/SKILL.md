@@ -1,6 +1,6 @@
 ---
 name: brain
-description: Search your documents (SIZE MB download on first use). Answers from a folder of files, citing paths and dates. Use to find why something is the way it is, or what the company already knows, before asking the human or guessing. No API key, nothing else to install.
+description: Search your documents (172 MB download on first use). Answers from a folder of files, citing paths and dates. Use to find why something is the way it is, or what the company already knows, before asking the human or guessing. No API key, nothing else to install.
 ---
 
 # brain
