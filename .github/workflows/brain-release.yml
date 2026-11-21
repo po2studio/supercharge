@@ -1,0 +1,158 @@
+name: brain release
+
+# A `brain-v*` tag builds the binary for the 4 platforms and publishes a GitHub pre-release with the
+# binaries and their sha256. Run by hand, it only builds (artifacts, no release).
+on:
+  push:
+    tags: ["brain-v*"]
+  workflow_dispatch:
+
+env:
+  # ONNX Runtime 1.31, the version `ort` 2.0.0-rc.15 links. pyke publishes no macOS x64 build of it,
+  # so that platform builds ONNX Runtime from source with pyke's own tool, once, and caches it.
+  ORT_VERSION: "1.31.0"
+  ORT_ARTIFACTS_REF: a756c60595a74b4dc286b89bcdf81a76f43df8fd
+  MACOSX_DEPLOYMENT_TARGET: "13.4"
+
+jobs:
+  ort-macos-x64:
+    runs-on: macos-15-intel
+    timeout-minutes: 240
+    steps:
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: ort-lib
+          key: ort-${{ env.ORT_VERSION }}-x86_64-apple-darwin-${{ env.ORT_ARTIFACTS_REF }}
+      - uses: actions/checkout@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          repository: pykeio/ort-artifacts
+          ref: ${{ env.ORT_ARTIFACTS_REF }}
+          path: ort-artifacts
+      - uses: denoland/setup-deno@v2
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          deno-version: v2.x
+      - name: Pin cmake 3.31.6 and install ninja (as ort-artifacts does)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          brew uninstall cmake || true
+          brew tap-new --no-git local/pinned >/dev/null
+          mkdir -p "$(brew --repo local/pinned)/Formula"
+          curl -fsSL https://raw.githubusercontent.com/Homebrew/homebrew-core/b4e46db74e74a8c1650b38b1da222284ce1ec5ce/Formula/c/cmake.rb -o "$(brew --repo local/pinned)/Formula/cmake.rb"
+          brew install local/pinned/cmake ninja
+      - name: Build ONNX Runtime (static, x86_64)
+        if: steps.cache.outputs.cache-hit != 'true'
+        working-directory: ort-artifacts
+        run: |
+          deno run -A src/build.ts -v "$ORT_VERSION" -s -N
+          mkdir -p "$GITHUB_WORKSPACE/ort-lib"
+          cp artifact/onnxruntime/lib/*.a "$GITHUB_WORKSPACE/ort-lib/"
+      - run: ls -la ort-lib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ort-macos-x64
+          path: ort-lib
+          retention-days: 1
+
+  build:
+    needs: ort-macos-x64
+    # `if: !cancelled()` so the three platforms that don't need the ONNX Runtime build still run
+    # when it fails, and show their own result.
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { name: macos-arm64, os: macos-15, target: aarch64-apple-darwin }
+          - { name: macos-x64, os: macos-15-intel, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: The ONNX Runtime build this platform needs
+        if: matrix.name == 'macos-x64' && needs.ort-macos-x64.result != 'success'
+        run: echo "ort-macos-x64 did not succeed" && exit 1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: brain
+          key: ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: brain/assets
+          key: brain-assets-${{ hashFiles('brain/build.rs') }}
+      - uses: actions/download-artifact@v4
+        if: matrix.name == 'macos-x64'
+        with:
+          name: ort-macos-x64
+          path: ort-lib
+      # Built on Ubuntu 22.04 so the binary needs only glibc 2.34. ONNX Runtime's libraries need a
+      # newer libstdc++ than 22.04 has, so gcc 14 links it in statically.
+      - name: gcc 14, C++ linked statically (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-14
+          {
+            echo "CC=gcc-14"
+            echo "ORT_CXX_STDLIB=static=stdc++"
+            echo "CARGO_TARGET_$(echo '${{ matrix.target }}' | tr 'a-z-' 'A-Z_')_LINKER=gcc-14"
+            echo "RUSTFLAGS=-C link-arg=-static-libgcc -L native=$(dirname "$(gcc-14 -print-file-name=libstdc++.a)")"
+          } >> "$GITHUB_ENV"
+      - name: Use the ONNX Runtime built from source (macOS x64)
+        if: matrix.name == 'macos-x64'
+        run: echo "ORT_LIB_LOCATION=$GITHUB_WORKSPACE/ort-lib" >> "$GITHUB_ENV"
+      - name: Build
+        working-directory: brain
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          mkdir dist
+          cp brain/target/${{ matrix.target }}/release/brain dist/brain-${{ matrix.name }}
+          cd dist
+          if command -v sha256sum >/dev/null; then sha256sum brain-${{ matrix.name }} > brain-${{ matrix.name }}.sha256; else shasum -a 256 brain-${{ matrix.name }} > brain-${{ matrix.name }}.sha256; fi
+          ls -la
+      - name: Runs alone, with no environment
+        run: brain/scripts/smoke.sh dist/brain-${{ matrix.name }}
+      - name: No C++ runtime and glibc 2.34 or older (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ldd dist/brain-${{ matrix.name }}
+          ! ldd dist/brain-${{ matrix.name }} | grep -F 'libstdc++'
+          newest=$(objdump -T dist/brain-${{ matrix.name }} | grep -v ' w ' | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1)
+          echo "needs $newest"
+          test "$(printf '%s\nGLIBC_2.34\n' "$newest" | sort -V | tail -1)" = GLIBC_2.34
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brain-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/brain-v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brain-*
+          path: dist
+          merge-multiple: true
+      - run: ls -la dist
+      - name: Publish the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(ls dist/brain-*.sha256 | wc -l)" = 4
+          cat dist/*.sha256 > dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+            --title "brain ${GITHUB_REF_NAME#brain-v}" \
+            --notes "The \`brain\` binary for the optional \`brain\` skill: linux x64 and arm64, macOS arm64 and x64. Each file has a .sha256; SHA256SUMS lists them all."

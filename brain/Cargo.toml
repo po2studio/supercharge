@@ -1,0 +1,25 @@
+[package]
+name = "brain"
+version = "0.1.0"
+edition = "2021"
+description = "Index and search a folder of documents on the CPU, offline"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-31"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+sha2 = "0.10"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+
+[build-dependencies]
+cc = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
