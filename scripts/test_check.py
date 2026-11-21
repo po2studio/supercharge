@@ -28,7 +28,7 @@ GOOD = {
 }
 
 
-def check(pins):
+def check(pins, raw=None):
     """Runs check.py on a tree holding only the brain skill; returns (exit code, output)."""
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "scripts").mkdir()
@@ -36,7 +36,9 @@ def check(pins):
         skill = Path(tmp) / "skills/brain"
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(SKILL)
-        if pins is not None:
+        if raw is not None:
+            (skill / "brain.json").write_text(raw)
+        elif pins is not None:
             (skill / "brain.json").write_text(json.dumps(pins))
         run = subprocess.run([sys.executable, str(Path(tmp) / "scripts/check.py")], capture_output=True, text=True)
         return run.returncode, run.stdout
@@ -48,11 +50,24 @@ class BrainPins(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn(needle, out)
 
+    def assert_rejected_text(self, raw, needle):
+        code, out = check(None, raw)
+        self.assertEqual(code, 1, out)
+        self.assertIn(needle, out)
+
     def test_complete_pins_pass(self):
         self.assertEqual(check(GOOD), (0, "ok\n"))
 
     def test_pins_are_required(self):
         self.assert_rejected(None, "brain.json: missing")
+
+    def test_the_pins_must_be_an_object(self):
+        for text in ("null", "[]", '"x"', "0"):
+            self.assert_rejected_text(text, "must be a JSON object")
+
+    def test_an_empty_or_broken_file_is_rejected(self):
+        self.assert_rejected_text("{}", "tag must be")
+        self.assert_rejected_text("{", "brain.json:")
 
     def test_all_four_platforms_are_required(self):
         pins = copy.deepcopy(GOOD)

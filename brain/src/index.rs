@@ -224,6 +224,7 @@ pub fn index(
                 skipped.push(format!("{rel} (cannot read: {e})"));
                 if known.contains_key(rel) {
                     store.remove_file(rel)?;
+                    report.files_removed += 1;
                 }
                 continue;
             }
@@ -628,6 +629,13 @@ mod tests {
             "{:?}",
             r.skipped
         );
+        // Indexed before it became unreadable: it leaves the index, and the run says so.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+        let r = run(&brain, &cache);
+        assert_eq!((r.files, r.chunks, r.files_removed), (2, 2, 0));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let r = run(&brain, &cache);
+        assert_eq!((r.files, r.chunks, r.files_removed), (1, 1, 1));
     }
 
     #[test]

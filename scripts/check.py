@@ -40,12 +40,15 @@ if brain_skill.exists() and not pins.exists():
     errors.append("skills/brain/brain.json: missing")
 if pins.exists():
     name = "skills/brain/brain.json"
+    data = None
     try:
         data = json.loads(pins.read_text())
     except json.JSONDecodeError as e:
-        data = None
         errors.append(f"{name}: {e}")
-    if data is not None:
+        data = {"unparsable": True}
+    if not isinstance(data, dict):
+        errors.append(f"{name}: must be a JSON object")
+    elif "unparsable" not in data:
         version = data.get("version")
         if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
             errors.append(f"{name}: version must be X.Y.Z")

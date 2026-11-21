@@ -368,14 +368,18 @@ mod tests {
         }
         let (_d, store) = brain(&[
             ("big.md", &big),
-            ("b.md", "# B\n\nbanana once"),
-            ("c.md", "# C\n\nbanana once more"),
+            ("b.md", &format!("# B\n\nbanana {}", filler("b_"))),
+            ("c.md", &format!("# C\n\nbanana {}", filler("c_"))),
         ]);
         let q = Query {
             terms: Some("banana"),
             about: None,
             k: 3,
         };
+        // The long file's 80 chunks all rank above the others', and fill the first pool of 50.
+        let first = fts(&store, "banana", 50).unwrap();
+        let in_big = |id: i64| chunk_hit(&store, id, 0.0).unwrap().path == "big.md";
+        assert!(first.iter().all(|(id, _)| in_big(*id)));
         let hits = search(&store, &mut Fake, &q, EXACT_LIMIT).unwrap();
         let mut found = paths(&hits);
         found.sort();
@@ -386,6 +390,14 @@ mod tests {
             about: Some("banana"),
             k: 3,
         };
+        let first = vector(
+            &store,
+            &Fake.embed_query("banana").unwrap(),
+            50,
+            EXACT_LIMIT,
+        )
+        .unwrap();
+        assert!(first.iter().all(|(id, _)| in_big(*id)));
         assert_eq!(search(&store, &mut Fake, &q, EXACT_LIMIT).unwrap().len(), 3);
     }
 

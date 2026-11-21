@@ -277,7 +277,7 @@ mod tests {
                     NewChunk {
                         heading: "".into(),
                         text: t.to_string(),
-                        header: format!("T · {path}"),
+                        header: format!("T · {path} · 2024-01-01"),
                         vector: v,
                     }
                 })

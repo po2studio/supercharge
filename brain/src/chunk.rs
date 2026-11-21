@@ -50,18 +50,21 @@ pub fn chunk(text: &str, count: &dyn Fn(&str) -> usize, p: &Params) -> Vec<Chunk
     let mut merged: Vec<Piece> = Vec::new();
     for piece in pieces {
         if let Some(last) = merged.last_mut() {
+            // A heading that changes is written into the merged text, so it counts too.
+            let heading = (piece.path != last.path)
+                .then(|| piece.path.last())
+                .flatten();
+            let heading_tokens = heading.map_or(0, |h| count(h));
             if (last.tokens < p.min || piece.tokens < p.min)
-                && last.tokens + piece.tokens <= p.target
+                && last.tokens + piece.tokens + heading_tokens <= p.target
             {
-                if piece.path != last.path {
-                    if let Some(h) = piece.path.last() {
-                        last.text.push_str("\n\n");
-                        last.text.push_str(h);
-                    }
+                if let Some(h) = heading {
+                    last.text.push_str("\n\n");
+                    last.text.push_str(h);
                 }
                 last.text.push_str("\n\n");
                 last.text.push_str(&piece.text);
-                last.tokens += piece.tokens;
+                last.tokens += piece.tokens + heading_tokens;
                 continue;
             }
         }
@@ -401,6 +404,19 @@ mod tests {
             "{:?}",
             c[0].text
         );
+    }
+
+    #[test]
+    fn a_merged_chunk_counts_the_heading_it_swallows() {
+        // 19 words, then one word under a ten-word heading: merging would make 30 words.
+        let doc = format!(
+            "# A\n\n{}\n\n# {}\n\nlast\n",
+            lorem(19, "a"),
+            lorem(10, "h")
+        );
+        let c = chunk(&doc, &words, &small());
+        assert_eq!(c.len(), 2, "{c:?}");
+        assert!(c.iter().all(|c| words(&c.text) <= 20), "{c:?}");
     }
 
     #[test]
