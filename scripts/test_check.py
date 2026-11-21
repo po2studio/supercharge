@@ -68,6 +68,7 @@ class BrainPins(unittest.TestCase):
     def test_an_empty_or_broken_file_is_rejected(self):
         self.assert_rejected_text("{}", "tag must be")
         self.assert_rejected_text("{", "brain.json:")
+        self.assert_rejected_text('{"unparsable": false}', "tag must be")
 
     def test_all_four_platforms_are_required(self):
         pins = copy.deepcopy(GOOD)
