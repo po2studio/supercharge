@@ -22,10 +22,6 @@ pub trait Embedder {
     fn count_tokens(&self, text: &str) -> usize;
 }
 
-fn ort_err<R>(e: ort::Error<R>) -> anyhow::Error {
-    anyhow!("onnx runtime: {e}")
-}
-
 pub struct Onnx {
     session: Session,
     tokenizer: Tokenizer,
@@ -42,13 +38,9 @@ impl Onnx {
             }))
             .map_err(|e| anyhow!("tokenizer: {e}"))?;
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        let env = ort::init().build().map_err(ort_err)?;
-        let session = Session::builder(&env)
-            .map_err(ort_err)?
-            .with_intra_threads(threads)
-            .map_err(ort_err)?
-            .commit_from_memory(MODEL)
-            .map_err(ort_err)?;
+        let session = Session::builder()?
+            .with_intra_threads(threads)?
+            .commit_from_memory(MODEL)?;
         Ok(Self { session, tokenizer })
     }
 
@@ -80,12 +72,12 @@ impl Onnx {
             let outputs = self
                 .session
                 .run(ort::inputs![
-                    "input_ids" => Tensor::from_array(([batch.len(), width], ids)).map_err(ort_err)?,
-                    "attention_mask" => Tensor::from_array(([batch.len(), width], mask.clone())).map_err(ort_err)?,
-                    "token_type_ids" => Tensor::from_array(([batch.len(), width], vec![0i64; batch.len() * width])).map_err(ort_err)?,
+                    "input_ids" => Tensor::from_array(([batch.len(), width], ids))?,
+                    "attention_mask" => Tensor::from_array(([batch.len(), width], mask.clone()))?,
+                    "token_type_ids" => Tensor::from_array(([batch.len(), width], vec![0i64; batch.len() * width]))?,
                 ])
-                .map_err(ort_err)?;
-            let (shape, hidden) = outputs[0].try_extract_tensor::<f32>().map_err(ort_err)?;
+                ?;
+            let (shape, hidden) = outputs[0].try_extract_tensor::<f32>()?;
             let dim = shape[2] as usize;
             if dim != DIM {
                 return Err(anyhow!("model returned {dim} dimensions, expected {DIM}"));
