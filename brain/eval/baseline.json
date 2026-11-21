@@ -1,0 +1,19 @@
+{
+  "questions": 49,
+  "files": 93,
+  "chunks": 134,
+  "terms": {
+    "recall_at_5": 0.599,
+    "mrr": 0.653
+  },
+  "about": {
+    "recall_at_5": 0.867,
+    "mrr": 0.9
+  },
+  "hybrid": {
+    "recall_at_5": 0.803,
+    "mrr": 0.779
+  },
+  "p50_ms": 20.777,
+  "chunks_per_s": 6.834
+}

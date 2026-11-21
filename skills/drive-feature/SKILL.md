@@ -1,6 +1,6 @@
 ---
 name: drive-feature
-description: Build a planned feature end to end by running build-slice for each slice, then report back once. Use when a feature doc or issue with slices exists and the human wants it built.
+description: Build a planned feature end to end. Runs build-slice for each slice, then reports back once. Use when a feature doc or issue with slices exists and the human wants it built.
 ---
 
 # drive-feature

@@ -1,6 +1,6 @@
 # Product
 
-Supercharge is a skill bundle for [omp](https://github.com/can1357/oh-my-pi) and [Claude Code](https://code.claude.com): five skills that take a request from one line to merged, tested code. The human answers one batch of questions and checks the plan at the start, and replies `go` at the end. The [README](../README.md) is the user-facing doc; this is the short version agents work from.
+Supercharge is a skill bundle for [omp](https://github.com/can1357/oh-my-pi) and [Claude Code](https://code.claude.com): five skills that take a request from one line to merged, tested code, and an optional sixth, `brain`, that answers questions from a folder of documents. The human answers one batch of questions and checks the plan at the start, and replies `go` at the end. The [README](../README.md) is the user-facing doc; this is the short version agents work from.
 
 ## Users
 
@@ -15,12 +15,13 @@ Developers and owners building software with strong LLM agents in omp or Claude 
    - **drifted docs:** `living-docs` runs in the session, on the planning model.
 2. **Build a feature:** start the feature issue, or run `/drive-feature <issue URL or doc>`. `build-slice` subagents build the slices, in parallel where the doc allows, and `drive-feature` ticks each on the feature issue once it's merged into the feature branch, so a fresh session skips the done slices and starts none whose dependency isn't done. `/drive-feature <feature issue URL> build only slice N` builds one slice; in a one-issue feature its PR says `Part of #N`. The finish refreshes the docs, sets the status to `shipped`, and opens one PR into `main` that closes the feature issue.
 3. **Build a slice or ticket:** start its issue, or run `/build-slice <issue URL>`: a builder subagent builds it, tests first, run for real, reviewed by a different model, then a PR with green CI that closes the issue; the session relays the stop. A slice has an issue of its own only in a feature planned with sub-issues; any other slice is built in flow 2.
+4. **Ask the brain (optional):** `/brain <question>`. With nothing configured it asks where the brain folder is (default `~/brain`), shows the binary's download size and cache path, and waits for `go`; then it downloads the pinned `brain` binary, checks its sha256 (a mismatch aborts and runs nothing), creates the layout, indexes the folder and answers in at most 10 lines, citing paths and dates, from a hybrid full-text and by-meaning search run in a scout. No API key, nothing written into a project or into the brain's raw files, and a project without a brain is never asked for one.
 
-None has an automated end-to-end test: skill text has no runtime. A real run checks a flow, written up in [`runs/`](../runs/).
+Flows 1 to 3 have no automated end-to-end test: skill text has no runtime. A real run checks a flow, written up in [`runs/`](../runs/). Flow 4 runs a binary: `brain/tests/e2e.rs` indexes a folder, searches it, changes a file and indexes again, through the `brain` CLI.
 
 ## Rules
 
-- **Config:** `risk`, `approve`, `ci_budget` and `docs`, in the `## Supercharge` block of a project's `AGENTS.md`. A missing key is asked for with the next request's questions, and takes its default until answered. See [Config](../README.md#config).
+- **Config:** `risk`, `approve`, `ci_budget` and `docs`, in the `## Supercharge` block of a project's `AGENTS.md`. A missing key is asked for with the next request's questions, and takes its default until answered. See [Config](../README.md#config). The optional `brain:` key (a project's override of the global brain path) is never asked for as missing: only `/brain` sets the path.
 - **The human acts only at the `approve` steps**, by replying `go`. The agent merges; the human never does.
 - **Ask about the business, decide the technical.** Business questions are asked in one batch, each with a default, as far as `risk` says; the one exception is a brainstorm, a back-and-forth until the human settles the direction; anything not asked is recorded as an assumption. A commitment outside the codebase is a `proposed` ADR the human accepts.
 - **What the human wrote or approved is binding.** Conflicts are flagged, not silently resolved.

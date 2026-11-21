@@ -1,6 +1,6 @@
 ---
 name: supercharge
-description: The entry point for any request in a project — an idea, a bug, a change or a feature. Sets the project up on first use, brainstorms when the direction is open, triages and plans new work, and hands planned work to drive-feature or build-slice.
+description: The entry point for any request in a project. An idea, a bug, a change or a feature. Sets the project up on first use, brainstorms when the direction is open, triages and plans new work, and hands planned work to drive-feature or build-slice.
 ---
 
 # supercharge

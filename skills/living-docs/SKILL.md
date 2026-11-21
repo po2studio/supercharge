@@ -1,6 +1,6 @@
 ---
 name: living-docs
-description: Create or refresh a project's living docs — AGENTS.md plus docs/BUSINESS, PRODUCT, ARCHITECTURE and DESIGN. Use at the start of a project, when docs have drifted from the code, or when a fresh agent would lack the context to work well.
+description: Create or refresh a project's living docs. Writes AGENTS.md plus docs/BUSINESS, PRODUCT, ARCHITECTURE and DESIGN. Use at the start of a project, when docs have drifted from the code, or when a fresh agent would lack the context to work well.
 ---
 
 # living-docs

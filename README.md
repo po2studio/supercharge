@@ -10,12 +10,12 @@ Made by [Saankofi](https://saankofi.com) and [PO2 Academy](https://www.po2academ
 
 ### Less is more
 
-The bundle is small on purpose: five skills, a few short docs, one config block. Every line in a skill should change behaviour; a line that changes nothing when deleted gets deleted. Why:
+The bundle is small on purpose: five skills, a few short docs, one config block, and an optional sixth skill, `brain`, with one downloaded binary of its own. Every line in a skill should change behaviour; a line that changes nothing when deleted gets deleted. Why:
 
 - **Strong models already know the craft.** They can write a test, shape a module and debug a failure. Spelling that out adds nothing, and a fixed recipe overrides judgement that is often better than the recipe.
 - **Every line costs attention.** Skill text is loaded on every run and competes with the task. The more a skill says, the less weight each line gets, so the lines that matter get lost among the ones that don't.
 - **Process ages; direction doesn't.** Step-by-step instructions written around one model's weaknesses become dead weight, or get in the way, with the next model. Goals, boundaries and a definition of done stay true.
-- **You can read all of it.** The whole bundle reads in one sitting, so you know what the agent was told and can see why it did what it did.
+- **You can read all of it.** The skills, the docs and the config read in one sitting, so you know what the agent was told and can see why it did what it did. The one piece of code the agent runs, the optional `brain` binary, lives in `brain/`; nothing else depends on it.
 
 The same goes for what the bundle produces. It takes the lightest route that's safe (a one-line fix is just done; only bigger work gets a feature doc), keeps a few short docs rather than a wiki, deletes acceptance tests once they pass, and keeps the test suite fast. Less to maintain, less to drift out of date, less for the next session to read.
 
@@ -84,7 +84,7 @@ In Claude Code:
 npx skills add po2studio/supercharge -g -a claude-code
 ```
 
-This installs into `~/.claude/skills`; leave out `-g` for one project's `.claude/skills`. Check by typing `/supercharge` in a session, or run `/skills`; update with `npx skills update -g`. That's the whole install: no plugin, agent files, settings or hooks, and nothing beyond `git` and `gh`.
+This installs into `~/.claude/skills`; leave out `-g` for one project's `.claude/skills`. Check by typing `/supercharge` in a session, or run `/skills`; update with `npx skills update -g`. That's the whole install: no plugin, agent files, settings or hooks, and nothing beyond `git` and `gh`. The optional `brain` skill downloads one binary the first time you use it, after you say `go` (see [Brain](#brain)); leave it out at install and nothing else changes.
 
 Claude Code needs v2.1.283 or later, where auto mode is the starting permission mode. On an older version, or where auto mode isn't the starting mode, start with `claude --permission-mode auto`. Claude Code is supported but untested: it stays that way until a run in it is written up in [`runs/`](runs/).
 
@@ -100,6 +100,8 @@ docs: docs                   # folder for the docs, ADRs and feature docs
 ```
 
 Missing keys take the defaults.
+
+One more key is optional and never part of the block `living-docs` writes: `brain:`, the path of this project's brain folder (absolute, `~/…`, or relative to the repo). It overrides the global path in `~/.config/supercharge/brain`, which `/brain` writes on first use. No skill asks for it as a missing key; with neither set there is no brain, and every skill behaves as it did before.
 
 ### `risk`
 
@@ -174,9 +176,21 @@ To build an existing plan:
 | `adr` | Records a decision in `docs/adr/NNNN-*.md` |
 | `build-slice` | Builds one slice to done: tests, end-to-end check, review, PR, green CI, docs updated |
 | `drive-feature` | Runs `build-slice` across a feature's slices, ticks each on the feature issue as it merges, then reports once |
+| `brain` | Optional. Answers a question from a folder of your documents, with paths and dates, using one downloaded binary (SIZE MB) |
 
 Each skill works on its own; `supercharge` and `drive-feature` start the others, and otherwise they coordinate only through the files above and their GitHub issues.
 Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`, the `github` tool), plus `gh` for issues, which the `github` tool can't create; in Claude Code it uses subagents, a headless browser and `gh`. If one is missing, the skill uses an equivalent, or stops and says so. No equivalent replaces a fresh subagent (not a fork) or a reviewer on a different model.
+
+## Brain
+
+Optional. `/brain <question>` answers from a folder of your documents and says which files and dates it found the answer in, for example `/brain why did we add a second phone field to signup?`. It needs no API key, installs nothing but one binary, and nothing leaves your machine.
+
+- **Install:** `brain` comes with the bundle; leave it out at install and nothing else changes. Its first use downloads one binary (about SIZE MB, from this repo's releases, sha256-checked, cached in `~/.cache/supercharge/brain/<version>/`) for Linux x64 or arm64 (glibc 2.34 or newer) or macOS arm64 or x64.
+- **Setup:** with nothing configured, the first `/brain` asks where the brain is (default `~/brain`; an existing folder of documents works as it is), shows the download size and the cache path, and waits for `go`. Then it downloads, checks the checksum (a mismatch aborts and runs nothing), creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` if they're missing, indexes the folder and answers. The path goes in `~/.config/supercharge/brain` (a project can override it with `brain:` in its `AGENTS.md`); nothing is written into any project, and no file in the brain is ever edited.
+- **Search:** the agent searches in a scout (so snippets stay out of your session), with full-text (`--terms`: an ID, a name, an error code) and by meaning (`--about`: a question that shares no words with its answer, in any language, Icelandic included), refines up to three times, and answers in at most 10 lines with paths and dates.
+- **Index:** one SQLite file per machine under `~/.cache/supercharge/index/`, never inside the brain, so a synced folder is safe. It embeds only files whose content changed; a first index runs at about 12 chunks a second on a laptop CPU.
+- **What it reads today:** markdown and plain text (`.md`, `.markdown`, `.txt`, `.text`). Other files are counted as not indexed in `brain stats`.
+- **The binary alone:** `brain --root <folder> index`, `search --terms … --about … --json`, `stats` and `eval`. `brain eval` indexes the corpus in `brain/eval/` and prints recall@5, MRR, search latency and indexing speed for full-text only, meaning only, and both, against the committed baseline; CI fails on a regression.
 
 ## Models
 
@@ -199,6 +213,8 @@ modelRoles:
 Without `task`, builders run on `default`; without `smol`, so do the small jobs, at the planning model's price. Keep `task` and `slow` different. On a subscription, choose by quota rather than price: a cheaper builder still saves most of it, because building uses most of the tokens.
 
 **In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket is built on `sonnet` and reviewed by `opus`, whatever model the session runs on. The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
+
+**The `brain` skill's searches** run in a scout, the small job: omp's `scout` on `smol`, and in Claude Code a fresh subagent on `haiku`. Finding a file is cheap work, and the snippets it reads never enter your session.
 
 Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed. Sonnet 5.5 builds in the owner's daily use (2026-11-12), without a write-up.
 
