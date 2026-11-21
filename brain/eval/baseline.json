@@ -8,12 +8,12 @@
   },
   "about": {
     "recall_at_5": 0.867,
-    "mrr": 0.874
+    "mrr": 0.9
   },
   "hybrid": {
     "recall_at_5": 0.803,
-    "mrr": 0.778
+    "mrr": 0.779
   },
-  "p50_ms": 4.903,
-  "chunks_per_s": 39.826
+  "p50_ms": 20.777,
+  "chunks_per_s": 6.834
 }

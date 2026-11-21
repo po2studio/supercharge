@@ -31,8 +31,8 @@ Never write into a project, and never into the brain's raw files.
 
 Run `brain --root <brain> index` first: it embeds only what changed, so it takes seconds when nothing did. Then search in a scout, so the snippets stay out of this session (omp's `scout`, which runs on `smol`; in Claude Code a fresh subagent on `haiku`). Give it the question, the binary and the brain's paths, and these rules:
 
-- `brain --root <brain> search [--terms …] [--about …] [-k N] --json` returns one hit per file: `path`, `title`, `heading`, `date`, `snippet`, `score`.
-- `--terms` is full-text (FTS5): words are ANDed, `OR` between alternatives, `"quotes"` for a phrase. Use it for what must match literally: an ID, a name, an error code.
+- `brain --root <brain> search [--terms …] [--about …] [-k N]` prints one hit per file, best first: its rank, path and heading, date and score, then the best passage.
+- `--terms` is full-text (FTS5): words are ANDed, `OR` between alternatives, `"quotes"` for a phrase. Use it for what must match literally: an ID, a name, an error code. It matches whole words, so give a prefix (`mötuneyti*`) for languages that inflect, Icelandic above all.
 - `--about` describes the answer in plain language and matches by meaning, in any language: use it alone when the question and the answer may share no words.
 - Give both only when you have an exact token and a description. Loose keywords beside `--about` push the right file down.
 - Read the snippets. If nothing answers, rephrase in other words or another language, narrow the terms, or raise `-k`; stop after three rounds. Read a whole file (read-only) only when a snippet isn't enough.

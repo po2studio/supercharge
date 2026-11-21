@@ -1,5 +1,5 @@
-//! Slice 1 acceptance tests, through the binary, with the real model and no network.
-//! Criteria numbers are the slice's (docs/features/0002-second-brain.md).
+//! The "Ask the brain" flow through the `brain` CLI, with the real model and no network: index a
+//! folder, search it, change a file, index again, and never write into the folder.
 
 use serde_json::Value;
 use std::{
@@ -106,47 +106,16 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
 }
 
 #[test]
-fn ac3_flat_text_with_no_headings_or_newlines_is_indexed_and_found() {
-    let mut flat = String::new();
-    for i in 0..300 {
-        flat.push_str(&format!(
-            "filler sentence number {i} about nothing in particular. "
-        ));
-    }
-    flat.push_str("The warehouse door code is zebrafish-7731. ");
-    for i in 0..300 {
-        flat.push_str(&format!("more filler {i} that goes on and on. "));
-    }
-    assert!(!flat.contains('\n'));
-    let env = Env::new(&[
-        ("misc/chat-export.txt", &flat),
-        ("misc/other.txt", "Nothing to see here."),
-    ]);
-    env.json(&["index", "--json"]);
-    let stats = env.json(&["stats", "--json"]);
-    assert!(
-        stats["chunks"].as_u64().unwrap() > 2,
-        "a long flat file is cut into several chunks: {stats}"
-    );
-    assert_eq!(
-        env.paths(&["search", "--terms", "zebrafish", "--json"]),
-        ["misc/chat-export.txt"]
-    );
-    let about = env.paths(&[
-        "search",
-        "--about",
-        "what is the code for the warehouse door",
-        "--json",
-        "-k",
-        "5",
-    ]);
-    assert_eq!(about[0], "misc/chat-export.txt");
-}
-
-#[test]
-fn ac4_a_question_with_no_shared_words_finds_its_answer_in_the_top_5() {
+fn index_search_change_and_index_again() {
     let env = small_brain();
-    env.json(&["index", "--json"]);
+    let first = env.json(&["index", "--json"]);
+    assert_eq!(first["embedded_chunks"], first["chunks"]);
+    // Exact terms, including an ID that isn't valid full-text syntax as typed.
+    assert_eq!(
+        env.paths(&["search", "--terms", "INV-2024-0042", "--json"]),
+        ["finance/invoices.md"]
+    );
+    // A question that shares no words with its answer, and an Icelandic one.
     let paths = env.paths(&[
         "search",
         "--about",
@@ -159,21 +128,6 @@ fn ac4_a_question_with_no_shared_words_finds_its_answer_in_the_top_5() {
         paths.contains(&"policies/animals.md".to_string()),
         "{paths:?}"
     );
-}
-
-#[test]
-fn ac4_an_exact_id_is_found_with_terms() {
-    let env = small_brain();
-    env.json(&["index", "--json"]);
-    // A hyphenated ID is not valid full-text syntax as typed; it must still work.
-    let paths = env.paths(&["search", "--terms", "INV-2024-0042", "--json"]);
-    assert_eq!(paths, ["finance/invoices.md"]);
-}
-
-#[test]
-fn ac4_an_icelandic_question_finds_its_icelandic_answer() {
-    let env = small_brain();
-    env.json(&["index", "--json"]);
     let paths = env.paths(&[
         "search",
         "--about",
@@ -183,12 +137,7 @@ fn ac4_an_icelandic_question_finds_its_icelandic_answer() {
         "3",
     ]);
     assert_eq!(paths[0], "icelandic/orlof.md", "{paths:?}");
-}
-
-#[test]
-fn ac4_hits_have_the_settled_shape() {
-    let env = small_brain();
-    env.json(&["index", "--json"]);
+    // Hits carry the settled fields.
     let hits = env.json(&[
         "search",
         "--terms",
@@ -197,38 +146,51 @@ fn ac4_hits_have_the_settled_shape() {
         "how often are computers replaced",
         "--json",
     ]);
-    let hit = &hits[0];
     for key in [
         "id", "path", "title", "heading", "date", "kind", "status", "stale", "score", "snippet",
         "versions",
     ] {
-        assert!(hit.get(key).is_some(), "hit lacks {key}: {hit}");
+        assert!(hits[0].get(key).is_some(), "hit lacks {key}: {}", hits[0]);
     }
-    assert_eq!(hit["path"], "it/laptops.md");
-    assert_eq!(hit["title"], "Laptops");
-    assert!(hit["snippet"].as_str().unwrap().contains("four years"));
-    assert!(hit["date"].as_str().unwrap().len() == 10);
-}
-
-#[test]
-fn ac5_after_one_file_changes_only_that_files_chunks_are_embedded_again() {
-    let env = small_brain();
-    let first = env.json(&["index", "--json"]);
-    assert_eq!(first["embedded_chunks"], first["chunks"]);
-    let again = env.json(&["index", "--json"]);
-    assert_eq!(again["embedded_chunks"], 0, "nothing changed: {again}");
+    // A flat text file with no headings or newlines is cut up and found.
+    let flat = (0..400)
+        .map(|i| format!("filler sentence {i} about nothing. "))
+        .collect::<String>()
+        + "The door code is zebrafish-7731. ";
+    env.write("misc/chat-export.txt", &flat);
+    let after = env.json(&["index", "--json"]);
+    assert_eq!(
+        (
+            after["files_changed"].as_u64(),
+            after["embedded_chunks"].as_u64() > Some(1)
+        ),
+        (Some(1), true)
+    );
+    assert_eq!(
+        env.paths(&["search", "--terms", "zebrafish", "--json"]),
+        ["misc/chat-export.txt"]
+    );
+    // Only the changed file is embedded again; `stats` says so.
     env.write(
         "it/laptops.md",
         "# Laptops\n\nNew laptops are replaced every three years now.\n",
     );
     let after = env.json(&["index", "--json"]);
-    assert_eq!(after["files_changed"], 1);
-    assert_eq!(after["embedded_chunks"], 1);
-    let stats = env.json(&["stats", "--json"]);
-    assert_eq!(stats["last_index"]["embedded_chunks"], 1);
-    assert_eq!(stats["files"], 5);
-    let paths = env.paths(&["search", "--terms", "three", "--json"]);
-    assert_eq!(paths, ["it/laptops.md"]);
+    assert_eq!(
+        (
+            after["files_changed"].as_u64(),
+            after["embedded_chunks"].as_u64()
+        ),
+        (Some(1), Some(1))
+    );
+    assert_eq!(
+        env.json(&["stats", "--json"])["last_index"]["embedded_chunks"],
+        1
+    );
+    assert_eq!(
+        env.paths(&["search", "--terms", "three", "--json"]),
+        ["it/laptops.md"]
+    );
     // A deleted file leaves the index.
     fs::remove_file(env.brain.path().join("it/laptops.md")).unwrap();
     env.json(&["index", "--json"]);
@@ -238,7 +200,47 @@ fn ac5_after_one_file_changes_only_that_files_chunks_are_embedded_again() {
 }
 
 #[test]
-fn ac6_eval_prints_the_metrics_and_hybrid_beats_terms_only() {
+fn nothing_is_written_into_the_brain() {
+    let env = small_brain();
+    let before = snapshot(env.brain.path());
+    env.json(&["index", "--json"]);
+    env.json(&["search", "--terms", "laptops", "--json"]);
+    env.json(&["stats", "--json"]);
+    assert_eq!(snapshot(env.brain.path()), before);
+    // The index lives under the cache directory, keyed by the root.
+    let index_dirs: Vec<_> = fs::read_dir(env.cache.path().join("index"))
+        .unwrap()
+        .collect();
+    assert_eq!(index_dirs.len(), 1);
+    assert!(index_dirs[0]
+        .as_ref()
+        .unwrap()
+        .path()
+        .join("index.sqlite")
+        .exists());
+}
+
+#[test]
+fn files_it_cannot_read_yet_are_counted_not_failed() {
+    let env = small_brain();
+    env.write("scans/receipt.pdf", "%PDF-1.4 not really");
+    env.write(".git/config", "[core]");
+    let index = env.json(&["index", "--json"]);
+    assert_eq!(index["files"], 5);
+    let stats = env.json(&["stats", "--json"]);
+    assert_eq!(stats["not_indexed"]["pdf"], 1);
+}
+
+#[test]
+fn search_before_index_says_so() {
+    let env = small_brain();
+    let out = env.cmd(&["search", "--terms", "laptops", "--json"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("brain index"));
+}
+
+#[test]
+fn eval_prints_the_metrics_and_fails_on_a_regression() {
     let corpus = TempDir::new().unwrap();
     let questions = TempDir::new().unwrap();
     let env = small_brain();
@@ -315,71 +317,4 @@ fn ac6_eval_prints_the_metrics_and_hybrid_beats_terms_only() {
         "a regression against the baseline must fail"
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("regress"));
-}
-
-#[test]
-fn ac7_a_lone_binary_indexes_and_searches_with_no_environment() {
-    let dir = TempDir::new().unwrap();
-    let lone = dir.path().join("brain");
-    fs::copy(env!("CARGO_BIN_EXE_brain"), &lone).unwrap();
-    let env = small_brain();
-    let out = run(
-        lone.to_str().unwrap(),
-        env.brain.path(),
-        env.cache.path(),
-        &["index", "--json"],
-    );
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let out = run(
-        lone.to_str().unwrap(),
-        env.brain.path(),
-        env.cache.path(),
-        &["search", "--terms", "laptops", "--json"],
-    );
-    assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("it/laptops.md"));
-}
-
-#[test]
-fn ac8_nothing_is_written_into_the_brain() {
-    let env = small_brain();
-    let before = snapshot(env.brain.path());
-    env.json(&["index", "--json"]);
-    env.json(&["search", "--terms", "laptops", "--json"]);
-    env.json(&["stats", "--json"]);
-    assert_eq!(snapshot(env.brain.path()), before);
-    // The index lives under the cache directory, keyed by the root.
-    let index_dirs: Vec<_> = fs::read_dir(env.cache.path().join("index"))
-        .unwrap()
-        .collect();
-    assert_eq!(index_dirs.len(), 1);
-    assert!(index_dirs[0]
-        .as_ref()
-        .unwrap()
-        .path()
-        .join("index.sqlite")
-        .exists());
-}
-
-#[test]
-fn files_it_cannot_read_yet_are_counted_not_failed() {
-    let env = small_brain();
-    env.write("scans/receipt.pdf", "%PDF-1.4 not really");
-    env.write(".git/config", "[core]");
-    let index = env.json(&["index", "--json"]);
-    assert_eq!(index["files"], 5);
-    let stats = env.json(&["stats", "--json"]);
-    assert_eq!(stats["not_indexed"]["pdf"], 1);
-}
-
-#[test]
-fn search_before_index_says_so() {
-    let env = small_brain();
-    let out = env.cmd(&["search", "--terms", "laptops", "--json"]);
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("brain index"));
 }

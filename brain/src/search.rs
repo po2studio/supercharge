@@ -24,8 +24,8 @@ pub struct Hit {
     pub status: Option<String>,
     pub stale: bool,
     pub score: f64,
-    pub snippet: String,
     pub versions: Vec<String>,
+    pub snippet: String,
 }
 
 pub struct Query<'a> {
@@ -206,6 +206,21 @@ fn chunk_hit(store: &Store, id: i64, score: f64) -> Result<Hit> {
     Ok(hit)
 }
 
+/// Breaks `text` at spaces into lines of at most `width` characters (a longer word gets its own line).
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        match lines.last_mut() {
+            Some(line) if line.chars().count() + 1 + word.chars().count() <= width => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_string()),
+        }
+    }
+    lines
+}
+
 fn snippet(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= SNIPPET_CHARS {
@@ -349,6 +364,17 @@ mod tests {
         ] {
             assert!(json.get(k).is_some(), "{k}");
         }
+    }
+
+    #[test]
+    fn wrap_breaks_at_spaces_and_keeps_every_word() {
+        let lines = wrap("aaa bbb ccc ddd eee", 8);
+        assert_eq!(lines, ["aaa bbb", "ccc ddd", "eee"]);
+        assert_eq!(
+            wrap("averyveryverylongword x", 5),
+            ["averyveryverylongword", "x"]
+        );
+        assert!(wrap("   ", 10).is_empty());
     }
 
     #[test]

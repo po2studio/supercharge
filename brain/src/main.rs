@@ -133,7 +133,12 @@ fn run() -> Result<()> {
                 search::search(&store, &mut NoEmbedder, &query, search::EXACT_LIMIT)?
             };
             if *json {
-                println!("{}", serde_json::to_string(&hits)?);
+                // One hit per line, so a tool that cuts long lines never swallows later hits.
+                let lines = hits
+                    .iter()
+                    .map(serde_json::to_string)
+                    .collect::<Result<Vec<_>, _>>()?;
+                println!("[\n{}\n]", lines.join(",\n"));
             } else {
                 for (i, h) in hits.iter().enumerate() {
                     let heading = if h.heading.is_empty() {
@@ -142,14 +147,16 @@ fn run() -> Result<()> {
                         format!(" › {}", h.heading)
                     };
                     println!(
-                        "{}. {}{} ({}, score {:.3})\n   {}",
+                        "{}. {}{} ({}, score {:.3})",
                         i + 1,
                         h.path,
                         heading,
                         h.date,
-                        h.score,
-                        h.snippet
+                        h.score
                     );
+                    for line in search::wrap(&h.snippet, 100) {
+                        println!("   {line}");
+                    }
                 }
             }
         }
