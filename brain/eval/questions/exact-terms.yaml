@@ -1,0 +1,50 @@
+- id: inv-0042
+  question: "Which customer was billed in invoice INV-2024-0042 and for how much?"
+  terms: "\"INV-2024-0042\""
+  expect: [finance/invoices-q4-2024.md]
+  answer: "Arctic Adventures, ISK 1,860,000 (due 15 Nov 2024)."
+- id: err-5173
+  question: "What does error ERR-5173 mean and what is the first action?"
+  terms: "\"ERR-5173\""
+  expect: [it/error-codes.md]
+  answer: "The Paylink payment token expired (checkout returns HTTP 402); rotate the Paylink API key in the vault and restart the payments worker."
+- id: sku-qx
+  question: "What is SKU-FJ-88-QX and how much does it cost?"
+  terms: "\"SKU-FJ-88-QX\""
+  expect: [product/sku-catalog.md]
+  answer: "The Westfjords 5-day self-drive package, EUR 1,240 per person."
+- id: thorunn-join
+  question: "In which year did Þórunn Kristjánsdóttir join Hrafn?"
+  terms: "\"Þórunn Kristjánsdóttir\""
+  expect: [people/bio-thorunn.md]
+  answer: "2021 (August)."
+- id: gudmundur-before
+  question: "Where did Guðmundur Ólafsson work before Hrafn?"
+  terms: "\"Guðmundur Ólafsson\""
+  expect: [people/bio-gudmundur.md]
+  answer: "Kolibri Systems, a Copenhagen logistics software firm, for seven years."
+- id: puffin-cutover
+  question: "When is the Project Puffin database cutover?"
+  terms: "Puffin"
+  expect: [product/project-puffin.md]
+  answer: "14 March 2025, between 01:00 and 04:00 UTC."
+- id: skumur-tech
+  question: "Which technology is Project Skúmur built with?"
+  terms: "Skúmur"
+  expect: [product/project-skumur.md]
+  answer: "React Native, for iOS and Android."
+- id: inv-0043
+  question: "What happened to invoice INV-2024-0043?"
+  terms: "\"INV-2024-0043\""
+  expect: [finance/credit-notes.md]
+  answer: "It was a duplicate issued by mistake and was cancelled by credit note CN-2024-0007 on 19 November 2024."
+- id: err-5137
+  question: "What caused ERR-5137?"
+  terms: "\"ERR-5137\""
+  expect: [meetings/2024-11-05-incident-review.md]
+  answer: "The inventory cache was not invalidated after a supplier feed schema change, so stale hotel availability was shown."
+- id: sku-qy
+  question: "What happened to SKU-FJ-88-QY?"
+  terms: "\"SKU-FJ-88-QY\""
+  expect: [meetings/2024-09-03-product-sync.md]
+  answer: "It, the older Westfjords 6-day package, was discontinued as of 1 October 2024 because the Ísafjörður guesthouse closed."

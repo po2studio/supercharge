@@ -1,0 +1,31 @@
+{
+  "version": "0.1.0",
+  "tag": "brain-v0.1.0",
+  "repo": "po2studio/supercharge",
+  "platforms": {
+    "linux-x64": {
+      "asset": "brain-linux-x64",
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.1.0/brain-linux-x64",
+      "sha256": "361e873efcf3335cff69d3ab782c8dc959bc4649d6ea4284e77affd4048c93ae",
+      "bytes": 171888832
+    },
+    "linux-arm64": {
+      "asset": "brain-linux-arm64",
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.1.0/brain-linux-arm64",
+      "sha256": "cb4ce7890cd15cdb09dc2d72a51c6e3034b1fcb763e6a4f1dde5016464876a67",
+      "bytes": 168213056
+    },
+    "macos-arm64": {
+      "asset": "brain-macos-arm64",
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.1.0/brain-macos-arm64",
+      "sha256": "d243479e51f16f7060ab2f3a84bc5318fdb921a8221a5b6918241cdf81018c3f",
+      "bytes": 166290384
+    },
+    "macos-x64": {
+      "asset": "brain-macos-x64",
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.1.0/brain-macos-x64",
+      "sha256": "0175f47e83e6eddf7fc13f0c9fe0818dc26b69a75598e877cb2f93cd2af41448",
+      "bytes": 168878240
+    }
+  }
+}

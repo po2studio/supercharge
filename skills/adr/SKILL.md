@@ -1,6 +1,6 @@
 ---
 name: adr
-description: Record an architecture or technical decision as a numbered ADR in docs/adr/. Use for decisions that are hard to reverse, or that a future agent would likely undo. Not for choices the code already makes obvious.
+description: Record a hard-to-reverse decision as an ADR in docs/adr/. Use for architecture or technical decisions a future agent would likely undo. Not for choices the code already makes obvious.
 ---
 
 # adr
