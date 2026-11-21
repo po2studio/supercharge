@@ -8,6 +8,13 @@ pub struct Parsed<'a> {
     pub date: Option<String>,
 }
 
+/// Titles and headings go into every chunk's header; a line of megabytes must not.
+pub const MAX_TITLE_CHARS: usize = 200;
+
+pub fn clip(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
 /// Splits a leading `---` frontmatter block off and reads `title` and `date` from it.
 /// Without frontmatter the title is the first `#` heading, if any.
 pub fn parse(text: &str) -> Parsed<'_> {
@@ -28,7 +35,7 @@ pub fn parse(text: &str) -> Parsed<'_> {
                     if let Some((k, v)) = l.split_once(':') {
                         let v = v.trim().trim_matches(|c| c == '"' || c == '\'').trim();
                         match k.trim() {
-                            "title" if !v.is_empty() => title = Some(v.to_string()),
+                            "title" if !v.is_empty() => title = Some(clip(v, MAX_TITLE_CHARS)),
                             "date" => date = valid_date(v),
                             _ => {}
                         }
@@ -43,7 +50,7 @@ pub fn parse(text: &str) -> Parsed<'_> {
         title = body
             .lines()
             .find_map(|l| l.strip_prefix("# "))
-            .map(|t| t.trim().trim_end_matches('#').trim().to_string())
+            .map(|t| clip(t.trim().trim_end_matches('#').trim(), MAX_TITLE_CHARS))
             .filter(|t| !t.is_empty());
     }
     Parsed { body, title, date }
@@ -60,8 +67,12 @@ fn valid_date(s: &str) -> Option<String> {
             c.is_ascii_digit()
         }
     });
+    // Only an all-ASCII shape may be sliced: a multi-byte character would split on a boundary.
+    if !ok {
+        return None;
+    }
     let (m, day) = (&d[5..7], &d[8..10]);
-    (ok && ("01"..="12").contains(&m) && ("01"..="31").contains(&day)).then(|| d.to_string())
+    (("01"..="12").contains(&m) && ("01"..="31").contains(&day)).then(|| d.to_string())
 }
 
 pub fn date_of(time: SystemTime) -> String {
@@ -122,6 +133,28 @@ mod tests {
                 .date
                 .as_deref(),
             Some("2024-05-14")
+        );
+    }
+
+    #[test]
+    fn a_date_with_multibyte_characters_is_not_a_date_and_does_not_panic() {
+        assert_eq!(parse("---\ndate: abcdéxxxx\n---\nx").date, None);
+        assert_eq!(parse("---\ndate: 2024-é5-14\n---\nx").date, None);
+        assert_eq!(parse("---\ndate: 日本語日本語日本語\n---\nx").date, None);
+    }
+
+    #[test]
+    fn a_title_is_cut_to_a_sane_length() {
+        let long = "w".repeat(5000);
+        let framed = format!("---\ntitle: {long}\n---\nx");
+        assert_eq!(
+            parse(&framed).title.unwrap().chars().count(),
+            MAX_TITLE_CHARS
+        );
+        let headed = format!("# {long}\n\nbody");
+        assert_eq!(
+            parse(&headed).title.unwrap().chars().count(),
+            MAX_TITLE_CHARS
         );
     }
 

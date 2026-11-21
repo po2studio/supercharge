@@ -8,7 +8,6 @@ name: brain release
 on:
   push:
     tags: ["brain-v*"]
-    branches: ["heidar/0002-slice-1-ask-the-brain"] # TEMP: dry runs while building slice 1
   workflow_dispatch:
 
 env:

@@ -86,10 +86,10 @@ pub fn measure(
     details: bool,
 ) -> Result<Results> {
     let questions = load_questions(questions)?;
-    let (files, _) = index::walk(corpus)?;
+    let files = index::walk(corpus)?.files;
     for q in &questions {
         for e in &q.expect {
-            if !files.contains(e) {
+            if !files.iter().any(|f| &f.rel == e) {
                 bail!("question {} expects {e}, which is not in the corpus", q.id);
             }
         }

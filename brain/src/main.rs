@@ -101,6 +101,7 @@ fn run() -> Result<()> {
                     "{} files, {} chunks; {} files changed, {} removed, {} chunks embedded in {:.1}s",
                     r.files, r.chunks, r.files_changed, r.files_removed, r.embedded_chunks, r.seconds
                 );
+                print_skipped(&r.skipped);
             }
         }
         Command::Search {
@@ -236,18 +237,41 @@ fn stats(root: &Path, json: bool) -> Result<()> {
             let list: Vec<String> = m.iter().map(|(k, v)| format!("{v} .{k}")).collect();
             println!("not indexed (no converter yet): {}", list.join(", "));
         }
+        let skipped: Vec<String> = last["skipped"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        print_skipped(&skipped);
     }
     Ok(())
+}
+
+/// Text files the last run left out, with why: they are reported, never silently dropped.
+fn print_skipped(skipped: &[String]) {
+    if skipped.is_empty() {
+        return;
+    }
+    println!("left out ({}):", skipped.len());
+    for s in skipped.iter().take(10) {
+        println!("  {s}");
+    }
+    if skipped.len() > 10 {
+        println!("  and {} more", skipped.len() - 10);
+    }
 }
 
 /// Mean embedding of every chunk in `corpus`, as little-endian f32.
 fn center(corpus: &Path, out: &Path) -> Result<()> {
     let mut embedder = embed::Onnx::load()?;
-    let (files, _) = index::walk(corpus)?;
+    let files = index::walk(corpus)?.files;
     let mut sum = vec![0f32; embed::DIM];
     let mut n = 0f32;
-    for rel in files {
-        let text = std::fs::read_to_string(corpus.join(&rel))?;
+    for file in files {
+        let text = String::from_utf8_lossy(&std::fs::read(&file.path)?).into_owned();
         let parsed = doc::parse(&text);
         let count = |s: &str| embedder.count_tokens(s);
         let chunks = chunk::chunk(parsed.body, &count, &chunk::Params::default());

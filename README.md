@@ -183,13 +183,13 @@ Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`,
 
 ## Brain
 
-Optional. `/brain <question>` answers from a folder of your documents and says which files and dates it found the answer in, for example `/brain why did we add a second phone field to signup?`. It needs no API key, installs nothing but one binary, and nothing leaves your machine.
+Optional. `/brain <question>` answers from a folder of your documents and says which files and dates it found the answer in, for example `/brain why did we add a second phone field to signup?`. It needs no API key and installs nothing but one binary. Indexing, embedding and search all run on your machine; the passages the agent reads to answer go to your model provider, like any file it reads.
 
 - **Install:** `brain` comes with the bundle; leave it out at install and nothing else changes. Its first use downloads one binary (about SIZE MB, from this repo's releases, sha256-checked, cached in `~/.cache/supercharge/brain/<version>/`) for Linux x64 or arm64 (glibc 2.34 or newer) or macOS arm64 or x64.
 - **Setup:** with nothing configured, the first `/brain` asks where the brain is (default `~/brain`; an existing folder of documents works as it is), shows the download size and the cache path, and waits for `go`. Then it downloads, checks the checksum (a mismatch aborts and runs nothing), creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` if they're missing, indexes the folder and answers. The path goes in `~/.config/supercharge/brain` (a project can override it with `brain:` in its `AGENTS.md`); nothing is written into any project, and no file in the brain is ever edited.
 - **Search:** the agent searches in a scout (so snippets stay out of your session), with full-text (`--terms`: an ID, a name, an error code) and by meaning (`--about`: a question that shares no words with its answer, in any language, Icelandic included), refines up to three times, and answers in at most 10 lines with paths and dates.
 - **Index:** one SQLite file per machine under `~/.cache/supercharge/index/`, never inside the brain, so a synced folder is safe. It embeds only files whose content changed; a first index runs at about 12 chunks a second on a laptop CPU.
-- **What it reads today:** markdown and plain text (`.md`, `.markdown`, `.txt`, `.text`). Other files are counted as not indexed in `brain stats`.
+- **What it reads today:** markdown and plain text (`.md`, `.markdown`, `.txt`, `.text`). Other files are counted as not indexed in `brain stats`, and a text file over 1 MiB, or one it cannot read, is listed there as left out, never skipped silently.
 - **The binary alone:** `brain --root <folder> index`, `search --terms … --about … --json`, `stats` and `eval`. `brain eval` indexes the corpus in `brain/eval/` and prints recall@5, MRR, search latency and indexing speed for full-text only, meaning only, and both, against the committed baseline; CI fails on a regression.
 
 ## Models

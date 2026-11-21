@@ -232,6 +232,60 @@ fn files_it_cannot_read_yet_are_counted_not_failed() {
 }
 
 #[test]
+fn a_text_file_over_the_size_cap_is_listed_as_left_out() {
+    let env = small_brain();
+    fs::File::create(env.brain.path().join("dump.txt"))
+        .unwrap()
+        .set_len((1 << 20) + 1)
+        .unwrap();
+    let index = env.json(&["index", "--json"]);
+    assert_eq!(index["files"], 5);
+    assert_eq!(index["skipped"][0], "dump.txt (over 1 MiB)");
+    let out = env.cmd(&["stats"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("left out (1)") && text.contains("dump.txt (over 1 MiB)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn one_huge_unbroken_line_is_indexed_in_bounded_time() {
+    let env = small_brain();
+    // Letters and digits with no space, newline or full stop: only a hard cut can split it.
+    let mut x: u64 = 88172645463325252;
+    let blob: String = (0..150_000)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            char::from(b"abcdefghijklmnopqrstuvwxyz0123456789"[(x % 36) as usize])
+        })
+        .collect();
+    env.write("dump/blob.txt", &blob);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_brain"))
+        .env_clear()
+        .env("SUPERCHARGE_CACHE_DIR", env.cache.path())
+        .arg("--root")
+        .arg(env.brain.path())
+        .args(["index", "--json"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(300) {
+            child.kill().unwrap();
+            panic!("indexing a 150 KB unbroken line took over 300 s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    let out: Value = serde_json::from_reader(child.stdout.take().unwrap()).unwrap();
+    assert_eq!(out["files_changed"], 6, "{out}");
+    assert!(out["chunks"].as_u64() > Some(100), "{out}");
+}
+
+#[test]
 fn search_before_index_says_so() {
     let env = small_brain();
     let out = env.cmd(&["search", "--terms", "laptops", "--json"]);

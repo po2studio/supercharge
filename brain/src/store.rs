@@ -152,11 +152,38 @@ impl Store {
         Ok(())
     }
 
-    /// path → content hash of every file in the index.
-    pub fn hashes(&self) -> Result<BTreeMap<String, String>> {
-        let mut stmt = self.conn.prepare("SELECT path, hash FROM files")?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    /// path → (content hash, date) of every file in the index.
+    pub fn files(&self) -> Result<BTreeMap<String, (String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT path, hash, date FROM files")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Sets a file's date, in the file and in every chunk's full-text header, without embedding
+    /// again: the vectors keep the date they were embedded with, which is a minor part of them.
+    pub fn refresh_date(&mut self, path: &str, date: &str) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let (file_id, title): (i64, String) =
+            tx.query_row("SELECT id, title FROM files WHERE path = ?1", [path], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+        tx.execute(
+            "UPDATE files SET date = ?1 WHERE id = ?2",
+            params![date, file_id],
+        )?;
+        let chunks: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare("SELECT id, heading FROM chunks WHERE file_id = ?1")?;
+            let rows = stmt.query_map([file_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for (id, heading) in chunks {
+            tx.execute(
+                "UPDATE fts SET header = ?1 WHERE rowid = ?2",
+                params![header(&title, &heading, path, date), id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn remove_file(&mut self, path: &str) -> Result<()> {
@@ -201,6 +228,15 @@ impl Store {
             .conn
             .query_row("SELECT count(*) FROM chunks", [], |r| r.get(0))?;
         Ok((files, chunks))
+    }
+}
+
+/// What FTS indexes besides the text, and what is embedded with it: `title › heading · path · date`.
+pub fn header(title: &str, heading: &str, path: &str, date: &str) -> String {
+    if heading.is_empty() {
+        format!("{title} · {path} · {date}")
+    } else {
+        format!("{title} › {heading} · {path} · {date}")
     }
 }
 
@@ -261,7 +297,7 @@ mod tests {
         assert_eq!(s.counts().unwrap(), (2, 3));
         s.put_files(&[file("a.md", "h3", &["uno"])]).unwrap();
         assert_eq!(s.counts().unwrap(), (2, 2));
-        assert_eq!(s.hashes().unwrap()["a.md"], "h3");
+        assert_eq!(s.files().unwrap()["a.md"].0, "h3");
         let fts: i64 = s
             .conn
             .query_row("SELECT count(*) FROM fts", [], |r| r.get(0))
@@ -276,6 +312,44 @@ mod tests {
         assert_eq!(hits, 0);
         s.remove_file("b.md").unwrap();
         assert_eq!(s.counts().unwrap(), (1, 1));
+    }
+
+    #[test]
+    fn refreshing_a_date_changes_the_file_and_what_full_text_matches_without_touching_vectors() {
+        let dir = TempDir::new().unwrap();
+        let mut s = Store::create(&dir.path().join("i/index.sqlite"), dir.path()).unwrap();
+        s.put_files(&[file("a.md", "h1", &["one", "two"])]).unwrap();
+        let before: Vec<Vec<u8>> = {
+            let mut stmt = s
+                .conn
+                .prepare("SELECT vec FROM chunks ORDER BY id")
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get(0)).unwrap();
+            rows.collect::<Result<_, _>>().unwrap()
+        };
+        s.refresh_date("a.md", "2031-02-03").unwrap();
+        assert_eq!(
+            s.files().unwrap()["a.md"],
+            ("h1".into(), "2031-02-03".into())
+        );
+        let matching = |q: &str| -> i64 {
+            s.conn
+                .query_row("SELECT count(*) FROM fts WHERE fts MATCH ?1", [q], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(matching("\"2031-02-03\""), 2);
+        assert_eq!(matching("\"2024-01-01\""), 0);
+        let after: Vec<Vec<u8>> = {
+            let mut stmt = s
+                .conn
+                .prepare("SELECT vec FROM chunks ORDER BY id")
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get(0)).unwrap();
+            rows.collect::<Result<_, _>>().unwrap()
+        };
+        assert_eq!(before, after);
     }
 
     #[test]

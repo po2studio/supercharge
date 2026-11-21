@@ -126,7 +126,7 @@ fn heading(line: &str) -> Option<(usize, String)> {
         return None;
     }
     let title = rest.trim().trim_end_matches('#').trim();
-    (!title.is_empty()).then(|| (hashes, title.to_string()))
+    (!title.is_empty()).then(|| (hashes, crate::doc::clip(title, crate::doc::MAX_TITLE_CHARS)))
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -158,12 +158,20 @@ impl Level {
     }
 }
 
+/// No natural text has more than this many bytes to a token, so a longer string is over the
+/// target without asking the tokenizer, whose time grows with what it is handed.
+const MAX_BYTES_PER_TOKEN: usize = 16;
+
+fn fits(text: &str, count: &dyn Fn(&str) -> usize, p: &Params) -> bool {
+    text.len() <= p.target * MAX_BYTES_PER_TOKEN && count(text) <= p.target
+}
+
 fn fit(text: &str, count: &dyn Fn(&str) -> usize, p: &Params) -> Vec<String> {
     split_at(text, Level::Paragraph, count, p)
 }
 
 fn split_at(text: &str, level: Level, count: &dyn Fn(&str) -> usize, p: &Params) -> Vec<String> {
-    if count(text) <= p.target {
+    if fits(text, count, p) {
         return vec![text.to_string()];
     }
     if level == Level::Cut {
@@ -186,7 +194,7 @@ fn split_at(text: &str, level: Level, count: &dyn Fn(&str) -> usize, p: &Params)
     }
     let mut units = Vec::new();
     for part in parts {
-        if count(&part) <= p.target {
+        if fits(&part, count, p) {
             units.push(part);
         } else {
             units.extend(split_at(&part, level.next().unwrap(), count, p));
@@ -266,11 +274,14 @@ fn pack(units: &[String], sep: &str, count: &dyn Fn(&str) -> usize, p: &Params) 
     chunks
 }
 
-/// A run with no usable boundary: cut by characters, in windows sized from its token density.
+/// A run with no usable boundary: cut by characters, in windows sized from the token density of
+/// its first `target` characters (never from the whole run, which may be megabytes long).
 fn hard_cut(text: &str, count: &dyn Fn(&str) -> usize, p: &Params) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
-    let tokens = count(text).max(1);
-    let mut window = (chars.len() * p.target / tokens).max(1);
+    let sample_len = chars.len().min(p.target);
+    let sample: String = chars[..sample_len].iter().collect();
+    let tokens = count(&sample).max(1);
+    let mut window = (sample_len * p.target / tokens).clamp(1, p.target * 8);
     let mut out = Vec::new();
     let mut start = 0;
     while start < chars.len() {
@@ -319,6 +330,16 @@ mod tests {
         assert!(chunk("", &words, &small()).is_empty());
         assert!(chunk("  \n\n \n", &words, &small()).is_empty());
         assert!(chunk("# Only a heading\n", &words, &small()).is_empty());
+    }
+
+    #[test]
+    fn a_huge_heading_is_cut_in_the_heading_path() {
+        let c = chunk(
+            &format!("# {}\n\nbody text here\n", "h".repeat(9000)),
+            &words,
+            &small(),
+        );
+        assert_eq!(c[0].heading.chars().count(), crate::doc::MAX_TITLE_CHARS);
     }
 
     #[test]
@@ -483,5 +504,50 @@ mod tests {
                 c.text
             );
         }
+    }
+
+    /// What the real tokenizer costs: time grows with the length of what it is handed, and it
+    /// reports at most 512 tokens however long the text is.
+    fn measured(
+        metric: fn(&str) -> usize,
+        biggest: &std::cell::Cell<usize>,
+        total: &std::cell::Cell<usize>,
+        s: &str,
+    ) -> usize {
+        biggest.set(biggest.get().max(s.len()));
+        total.set(total.get() + s.len());
+        metric(s).min(512)
+    }
+
+    #[test]
+    fn a_huge_text_with_no_boundaries_is_never_measured_whole() {
+        let (biggest, total) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+        let count = |s: &str| measured(quarter, &biggest, &total, s);
+        let p = Params::default();
+        let blob = "x".repeat(4_000_000);
+        let c = chunk(&blob, &count, &p);
+        assert!(c.iter().all(|c| quarter(&c.text) <= p.target));
+        assert_eq!(c.iter().map(|c| c.text.len()).sum::<usize>(), 4_000_000);
+        assert!(
+            biggest.get() <= p.target * 16,
+            "measured a {}-byte string",
+            biggest.get()
+        );
+        assert!(
+            total.get() <= 8 * 4_000_000,
+            "measured {} bytes",
+            total.get()
+        );
+    }
+
+    #[test]
+    fn a_huge_text_with_words_is_measured_in_small_pieces_too() {
+        let (biggest, total) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+        let count = |s: &str| measured(words, &biggest, &total, s);
+        let p = Params::default();
+        let text = "word ".repeat(200_000);
+        let c = chunk(&text, &count, &p);
+        assert!(c.iter().all(|c| words(&c.text) <= p.target));
+        assert!(biggest.get() <= p.target * 16, "{}", biggest.get());
     }
 }

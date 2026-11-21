@@ -43,34 +43,44 @@ pub fn search(
     if q.terms.is_none() && q.about.is_none() {
         bail!("give --terms, --about, or both");
     }
-    let pool = (q.k * 10).max(50);
-    let by_terms = q.terms.map(|t| fts(store, t, pool)).transpose()?;
-    let by_about = match q.about {
-        Some(text) => Some(vector(
-            store,
-            &embedder.embed_query(text)?,
-            pool,
-            exact_limit,
-        )?),
-        None => None,
-    };
-    let ranked: Vec<(i64, f64)> = match (by_terms, by_about) {
-        (Some(t), Some(a)) => fuse(&[t, a]),
-        (Some(l), None) | (None, Some(l)) => l,
-        (None, None) => unreachable!(),
-    };
-    let mut hits: Vec<Hit> = Vec::new();
-    for (id, score) in ranked {
-        let hit = chunk_hit(store, id, score)?;
-        // One hit per file: its best chunk.
-        if hits.iter().all(|h| h.path != hit.path) {
-            hits.push(hit);
+    // One hit per file, its best chunk. A file with many matching chunks can fill the candidate
+    // pool on its own, so the pool grows until it yields `k` files or holds every match.
+    let mut pool = (q.k * 10).max(50);
+    loop {
+        let by_terms = q.terms.map(|t| fts(store, t, pool)).transpose()?;
+        let by_about = match q.about {
+            Some(text) => Some(vector(
+                store,
+                &embedder.embed_query(text)?,
+                pool,
+                exact_limit,
+            )?),
+            None => None,
+        };
+        let exhausted = [&by_terms, &by_about]
+            .into_iter()
+            .flatten()
+            .all(|list| list.len() < pool);
+        let ranked: Vec<(i64, f64)> = match (by_terms, by_about) {
+            (Some(t), Some(a)) => fuse(&[t, a]),
+            (Some(l), None) | (None, Some(l)) => l,
+            (None, None) => unreachable!(),
+        };
+        let mut hits: Vec<Hit> = Vec::new();
+        for (id, score) in ranked {
+            let hit = chunk_hit(store, id, score)?;
+            if hits.iter().all(|h| h.path != hit.path) {
+                hits.push(hit);
+            }
+            if hits.len() == q.k {
+                break;
+            }
         }
-        if hits.len() == q.k {
-            break;
+        if hits.len() == q.k || exhausted {
+            return Ok(hits);
         }
+        pool *= 4;
     }
-    Ok(hits)
 }
 
 fn fuse(lists: &[Vec<(i64, f64)>]) -> Vec<(i64, f64)> {
@@ -339,6 +349,44 @@ mod tests {
         let hits = search(&store, &mut Fake, &q, EXACT_LIMIT).unwrap();
         assert_eq!(paths(&hits).iter().filter(|p| **p == "long.md").count(), 1);
         assert!(hits[0].score > 0.0);
+    }
+
+    #[test]
+    fn one_file_with_many_matching_chunks_does_not_hide_the_others() {
+        let filler = |tag: &str| {
+            (0..70)
+                .map(|i| format!("{tag}{i}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let mut big = String::new();
+        for i in 0..80 {
+            big.push_str(&format!(
+                "# S{i}\n\nbanana banana banana {}\n\n",
+                filler(&format!("f{i}_"))
+            ));
+        }
+        let (_d, store) = brain(&[
+            ("big.md", &big),
+            ("b.md", "# B\n\nbanana once"),
+            ("c.md", "# C\n\nbanana once more"),
+        ]);
+        let q = Query {
+            terms: Some("banana"),
+            about: None,
+            k: 3,
+        };
+        let hits = search(&store, &mut Fake, &q, EXACT_LIMIT).unwrap();
+        let mut found = paths(&hits);
+        found.sort();
+        assert_eq!(found, ["b.md", "big.md", "c.md"]);
+        // And the same through the vector half.
+        let q = Query {
+            terms: None,
+            about: Some("banana"),
+            k: 3,
+        };
+        assert_eq!(search(&store, &mut Fake, &q, EXACT_LIMIT).unwrap().len(), 3);
     }
 
     #[test]
