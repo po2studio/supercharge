@@ -190,6 +190,7 @@ Optional. `/brain <question>` answers from a folder of your documents and says w
 - **Search:** the agent searches in a small-model subagent (so snippets stay out of your session), with full-text (`--terms`: an ID, a name, an error code) and by meaning (`--about`: a question that shares no words with its answer, in any language, Icelandic included), refines up to three times, and answers in at most 10 lines with paths and dates.
 - **Index:** one SQLite file per machine under `~/.cache/supercharge/index/`, never inside the brain, so a synced folder is safe. It embeds only files whose content changed; a first index runs at about 12 chunks a second on a laptop CPU.
 - **What it reads today:** markdown and plain text (`.md`, `.markdown`, `.txt`, `.text`). Other files are counted as not indexed in `brain stats`, and a text file over 1 MiB, or one it cannot read, is listed there as left out, never skipped silently.
+- **Measured:** on 49 golden questions an agent with the brain answered 47 right on both a 93-file and a 742-file corpus, against 45 and 44 for an agent with only `grep`; on the large corpus it used a quarter fewer tokens, and it was about a second slower per question ([the run](runs/2026-11-21-brain-vs-grep.md)).
 - **The binary alone:** `brain --root <folder> index`, `search --terms … --about … --json`, `stats` and `eval`. `brain eval` indexes the corpus in `brain/eval/` and prints recall@5, MRR, search latency and indexing speed for full-text only, meaning only, and both, against the committed baseline; CI fails on a regression.
 
 ## Models
