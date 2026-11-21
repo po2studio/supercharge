@@ -187,7 +187,7 @@ Optional. `/brain <question>` answers from a folder of your documents and says w
 
 - **Install:** `brain` comes with the bundle; leave it out at install and nothing else changes. Its first use downloads one binary (about 172 MB, from this repo's releases, sha256-checked, cached in `~/.cache/supercharge/brain/<version>/`) for Linux x64 or arm64 (glibc 2.34 or newer) or macOS arm64 or x64.
 - **Setup:** with nothing configured, the first `/brain` asks where the brain is (default `~/brain`; an existing folder of documents works as it is), shows the download size and the cache path, and waits for `go`. Then it downloads, checks the checksum (a mismatch aborts and runs nothing), creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` if they're missing, indexes the folder and answers. The path goes in `~/.config/supercharge/brain` (a project can override it with `brain:` in its `AGENTS.md`); nothing is written into any project, and no file in the brain is ever edited.
-- **Search:** the agent searches in a scout (so snippets stay out of your session), with full-text (`--terms`: an ID, a name, an error code) and by meaning (`--about`: a question that shares no words with its answer, in any language, Icelandic included), refines up to three times, and answers in at most 10 lines with paths and dates.
+- **Search:** the agent searches in a small-model subagent (so snippets stay out of your session), with full-text (`--terms`: an ID, a name, an error code) and by meaning (`--about`: a question that shares no words with its answer, in any language, Icelandic included), refines up to three times, and answers in at most 10 lines with paths and dates.
 - **Index:** one SQLite file per machine under `~/.cache/supercharge/index/`, never inside the brain, so a synced folder is safe. It embeds only files whose content changed; a first index runs at about 12 chunks a second on a laptop CPU.
 - **What it reads today:** markdown and plain text (`.md`, `.markdown`, `.txt`, `.text`). Other files are counted as not indexed in `brain stats`, and a text file over 1 MiB, or one it cannot read, is listed there as left out, never skipped silently.
 - **The binary alone:** `brain --root <folder> index`, `search --terms … --about … --json`, `stats` and `eval`. `brain eval` indexes the corpus in `brain/eval/` and prints recall@5, MRR, search latency and indexing speed for full-text only, meaning only, and both, against the committed baseline; CI fails on a regression.
@@ -200,21 +200,21 @@ There are three jobs, and they need different things:
 - **Building** (`build-slice`): good technical judgement. It uses most of the tokens, so this is where a cheaper model pays off. A slice or ticket started from its issue is built in a builder subagent too, so the session's model doesn't build.
 - **Reviewing** (omp's `reviewer` agent, or a fresh subagent in Claude Code): an independent check. Always a different model from the builder, ideally from a different company. It's cheap.
 
-In omp the agent picks the agent (`task`, `reviewer`, `scout`), never the model: omp's model roles set each agent's model. Each job runs on a role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`scout` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
+In omp the agent picks the agent (`task`, `reviewer`, `sonic`), never the model: omp's model roles set each agent's model. Each job runs on a role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`sonic` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
 
 ```yaml
 modelRoles:
   default: anthropic/claude-opus-5.5     # plans and drives
   task: anthropic/claude-sonnet-5.5      # builds
   slow: openai-codex/gpt-6.1-sol         # reviews
-  smol: anthropic/claude-haiku-5.5       # scouts, titles
+  smol: anthropic/claude-haiku-5.5       # sonic searches, titles
 ```
 
 Without `task`, builders run on `default`; without `smol`, so do the small jobs, at the planning model's price. Keep `task` and `slow` different. On a subscription, choose by quota rather than price: a cheaper builder still saves most of it, because building uses most of the tokens.
 
 **In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket is built on `sonnet` and reviewed by `opus`, whatever model the session runs on. The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
 
-**The `brain` skill's searches** run in a scout, the small job: omp's `scout` on `smol`, and in Claude Code a fresh subagent on `haiku`. Finding a file is cheap work, and the snippets it reads never enter your session.
+**The `brain` skill's searches** run in a small-model subagent, the small job: omp's `sonic` on `smol` (`scout` is read-only and can't run the binary), and in Claude Code a fresh subagent on `haiku`. Finding a file is cheap work, and the snippets it reads never enter your session.
 
 Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed. Sonnet 5.5 builds in the owner's daily use (2026-11-12), without a write-up.
 

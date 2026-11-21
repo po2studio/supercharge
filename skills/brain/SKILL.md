@@ -23,13 +23,13 @@ Nothing configured, or the pinned binary isn't cached. Don't search, and write n
 2. Write the location to `~/.config/supercharge/brain`.
 3. Download with `gh release download <tag> --repo <repo> --pattern <asset> --dir <temp dir>`, from the file's `tag` and `repo` and the entry's `asset`. Check the file's sha256 against the entry. If it differs, delete the file, say the checksum failed, and stop: run nothing. Otherwise make it executable and move it to the cache path.
 4. Create what the brain folder lacks, and nothing else: `BRAIN.md` (a short note: this is a brain, format version 1, everything is raw except what agents own: `BRAIN.md`, `decisions/`, `notes/` and `projects/`, and agents never edit raw files), and the folders `decisions/`, `notes/` and `projects/`.
-5. `brain --root <brain> index`, then answer the question as below.
+5. `brain --root <brain> index`, then answer the question as below, with the search subagent.
 
 Never write into a project, and never into the brain's raw files.
 
 ## Answer
 
-Run `brain --root <brain> index` first: it embeds only what changed, so it takes seconds when nothing did. Then search in a scout, so the snippets stay out of this session (omp's `scout`, which runs on `smol`; in Claude Code a fresh subagent on `haiku`). Give it the question, the binary and the brain's paths, and these rules:
+Run `brain --root <brain> index` first: it embeds only what changed, so it takes seconds when nothing did. Its `indexed N/M files` lines are progress, not a count of failures; its last line is the result, and any `left out` list names files it skipped. Then spawn a subagent to do the searching, and don't run `search` yourself, so the snippets stay out of this session (omp's `sonic` agent, which has a shell and runs on `smol`: omp's `scout` is read-only and cannot run the binary; in Claude Code a fresh subagent on `haiku`). Give it the question, the binary and the brain's paths, and these rules:
 
 - `brain --root <brain> search [--terms …] [--about …] [-k N]` prints one hit per file, best first: its rank, path and heading, date and score, then the best passage.
 - `--terms` is full-text (FTS5): words are ANDed, `OR` between alternatives, `"quotes"` for a phrase. Use it for what must match literally: an ID, a name, an error code. It matches whole words, so give a prefix (`mötuneyti*`) for languages that inflect, Icelandic above all.

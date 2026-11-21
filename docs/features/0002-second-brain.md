@@ -20,7 +20,7 @@ Hard requirements (owner, 2026-11-03):
 - **`brain` binary** (Rust, in this repo under `brain/`, released for 4 platforms): converts any file to text, chunks it, embeds it on the CPU with a multilingual model compiled in, and keeps one SQLite index (full-text plus vectors). Commands: `index`, `search`, `check`, `stats`, `eval`, `bench`. Decided in [ADR 0001](../adr/0001-one-binary-in-the-bundle.md) and [ADR 0002](../adr/0002-local-embeddings-one-sqlite-index.md).
 - **`brain` skill**, which owns every brain behaviour:
   - first-run setup: the brain's location, then the download with its size and checksum, then the first index;
-  - agentic hybrid search: the agent picks terms and/or a plain-language description, filters, and refines, in a scout on the small model, answering with citations and dates;
+  - agentic hybrid search: the agent picks terms and/or a plain-language description, filters, and refines, in a subagent on the small model, answering with citations and dates;
   - the ship step and `/brain refresh`;
   - the brain repo's CI.
 - **Decisions** in the brain: `supercharge` searches before it asks and records the human's answers, and the ship step records what shipped work decided. A project's ADRs stay in its repo and are searched where they are.
@@ -109,7 +109,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 **Where `supercharge` uses the brain.** Any route that asks business questions (ticket, feature, and the triage after a brainstorm) searches the brain first and cites what's settled instead of asking. After `go`, it records each answer as a decision whose `source` is the issue, and the feature doc's assumptions and decisions link to those files rather than repeating them. A brainstorm that ends in "not now" writes nothing, to the brain included. The direct route asks nothing, so records nothing until its ship step.
 
 **Harnesses.** The `brain` skill and every skill change work in omp and Claude Code, following [0003](0003-claude-code.md)'s wording rule: name the capability, and name a harness only in a short clause where the two differ.
-- Search scout: omp's `scout` on `smol`; in Claude Code a fresh subagent on `haiku`.
+- Search subagent: omp's `sonic` on `smol` (it has a shell; `scout` is read-only and can't run the binary, found in slice 1's first real run); in Claude Code a fresh subagent on `haiku`.
 - Ship step, note refresh and lint: a builder subagent, omp's `task`; in Claude Code a fresh subagent on `sonnet`.
 
 **Index.**
@@ -192,7 +192,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - **Rust CI:** tests, clippy and `brain eval`, run only when `brain/` changes.
 - **The `brain` skill** (`skills/brain/SKILL.md` and `brain.json`):
   - first-run setup: location, written to `~/.config/supercharge/brain` (a `brain:` key in AGENTS.md overrides it, but setup never writes one); consent with the size; download; checksum; cache; layout created if missing; first index;
-  - agentic search in a scout (omp's `scout` on `smol`; in Claude Code a fresh subagent on `haiku`): the agent picks terms and/or a description, reads snippets, refines, and answers in ≤ 10 lines with paths and dates;
+  - agentic search in a subagent (omp's `sonic` on `smol`, not `scout`, which can't run the binary; in Claude Code a fresh subagent on `haiku`): the agent picks terms and/or a description, reads snippets, refines, and answers in ≤ 10 lines with paths and dates;
   - its description states the download size.
 - **Eval v1:** markdown and text corpus, including flat text, Icelandic, and a pair with no shared words.
 - **A `runs/` write-up:** agent-level accuracy, tokens and time per question, against an agent grepping the same folder without the brain.
