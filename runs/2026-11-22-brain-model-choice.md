@@ -2,7 +2,7 @@
 
 Slice 7 of [feature 0002](../docs/features/0002-second-brain.md), the last slice. The default `multilingual-e5-small` (int8) against EmbeddingGemma 2 (text only, 256 dimensions), on the full eval: both formats, decisions, notes, Icelandic, duplicates, project docs. The rule was: switch only if recall@5 rises by 5 points or more, and indexing a 1M-document brain is still possible with the shared index.
 
-**Result: no switch.** Recall@5 of the search users get (hybrid) did not rise: 0.917 to 0.911. The candidate's best mode (meaning only) rose 2.2 points. It indexes about 7 times slower, answers 7 to 11 times slower, and makes the binary 2.2 times bigger. Nothing in `brain/` changes, and `brain.json` still pins 0.6.0.
+**Result: no switch.** Recall@5 of the search users get (hybrid) did not rise: 0.917 to 0.911. The candidate's best mode (meaning only) rose 2.2 points. It indexes about 7 times slower, searches 6 to 11 times slower in-process (1.65 times from the command line, where loading the model dominates), and makes the binary 2.2 times bigger. Nothing in `brain/` changes, and `brain.json` still pins 0.6.0.
 
 ## The candidate, verified
 
@@ -42,10 +42,10 @@ Per question, hybrid: Gemma finds none that e5 misses in the top 5 and misses on
 
 ## The decision
 
-The rule needs both conditions; neither holds.
+The rule needs both conditions; the first fails, which settles it, and the second is shown only as a risk.
 
 1. **Recall@5 rises 5 points or more:** no. Hybrid, the mode the `brain` skill's search uses: -0.6 points. The most favourable reading, meaning-only search: +2.2 points at 256 dimensions, +3.4 at 768.
-2. **Indexing a 1M-document brain still possible with the shared index:** at risk. These are extrapolations from the 256-chunk bench, not measurements. On this machine 1M chunks take about 20 hours with e5 (14.1 chunks/s) and about 6.4 days with Gemma (1.8 chunks/s). The shared index's CI job stops at 330 minutes: that embeds about 280 000 chunks with e5, about 36 000 with Gemma, so a first build is about 4 runs against about 28. Slice 6's acceptance target of at least 12 chunks/s is also missed by 6.7 times, on a machine that was busy for both models.
+2. **Indexing a 1M-document brain still possible with the shared index:** not proven either way, and made much worse. The shared index's CI publishes partial indexes and restarts until done, so a build this slow is possible, not impossible. These are extrapolations from the 256-chunk bench, not measurements. On this machine 1M chunks take about 20 hours with e5 (14.1 chunks/s) and about 6.4 days with Gemma (1.8 chunks/s). The shared index's CI job stops at 330 minutes: that embeds about 280 000 chunks with e5, about 36 000 with Gemma, so a first build is about 4 runs against about 28. Slice 6's acceptance target of at least 12 chunks/s is also missed by 6.7 times, on a machine that was busy for both models.
 
 The switch would also have meant a release with two platforms' int8 kernels unproven, a rewritten model file to host, and a binary of 388 MB instead of 177 MB for every user of the skill. None of that is bought by this recall. So e5 stays and ADR 0002 stands; there is no new ADR.
 
