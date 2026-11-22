@@ -1,6 +1,6 @@
 # 0002: Second brain: a searchable, self-maintaining knowledge base
 
-Feature issue: [#15](https://github.com/po2studio/supercharge/issues/15). Status: **planned**.
+Feature issue: [#15](https://github.com/po2studio/supercharge/issues/15). Status: **shipped**.
 
 ## Why
 Living docs say what a project is today: business, product, architecture, design, ADRs. Nothing holds the rest:
