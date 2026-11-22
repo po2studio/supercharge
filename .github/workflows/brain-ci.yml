@@ -1,0 +1,34 @@
+name: brain
+
+# Only when the binary's source changes.
+on:
+  pull_request:
+    paths: ["brain/**", ".github/workflows/brain-ci.yml"]
+  push:
+    branches: [main]
+    paths: ["brain/**", ".github/workflows/brain-ci.yml"]
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: brain
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: brain
+      # build.rs fetches the model once; keep it so Hugging Face's rate limit can't fail CI.
+      - uses: actions/cache@v4
+        with:
+          path: brain/assets
+          key: brain-assets-${{ hashFiles('brain/build.rs') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --release --all-targets -- -D warnings
+      - run: cargo test --release
+      - name: Eval against the committed baseline
+        run: cargo run --release -- eval

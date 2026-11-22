@@ -1,0 +1,65 @@
+# Written into the brain repo as .github/workflows/brain.yml by the `brain` skill (supercharge),
+# with the pinned release's tag, repo, asset and sha256 filled in from the skill's brain.json. On
+# the default branch it builds the index of this repo's own files and publishes it as an asset of
+# the release `brain-index`, so a machine pulls it instead of embedding the whole brain; it never
+# holds a project's docs.
+name: brain
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    # The index is built from the one published last, so a push embeds only what changed. A first
+    # build of a big brain may not fit a job: it stops at the budget, publishes what it has, and
+    # starts the workflow again to carry on.
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    permissions:
+      contents: write
+      actions: write
+    concurrency:
+      group: brain-index
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Dates of files come from history.
+          fetch-depth: 0
+      - name: Download the pinned brain binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          gh release download @TAG@ --repo @REPO@ --pattern @ASSET@ --dir "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/bin"
+          echo "@SHA256@  @ASSET@" | sha256sum -c -
+          mv @ASSET@ brain
+          chmod +x brain
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build the index of this repo's files
+        run: |
+          brain pack --budget 330 --out "$RUNNER_TEMP/index" --json > "$RUNNER_TEMP/pack.json"
+          jq -c '{assets, bytes, started_from: .pulled.commit, files: .report.files, chunks: .report.chunks, embedded: .report.embedded_chunks, seconds: .report.seconds, incomplete: .report.incomplete}' "$RUNNER_TEMP/pack.json"
+      - name: Publish it
+        run: |
+          gh release view brain-index > /dev/null 2>&1 || gh release create brain-index --prerelease --target "$GITHUB_SHA" \
+            --title "Shared index" --notes "The index of this brain's own files, built by CI and pulled by \`brain index\`. Do not edit."
+          # An index over 1.9 GB goes up in several parts, in order, so a part missing means it is not whole yet.
+          for part in $(jq -r '.assets[]' "$RUNNER_TEMP/pack.json"); do
+            gh release upload brain-index "$RUNNER_TEMP/index/$part" --clobber
+          done
+          # Keep the newest two indexes, so a machine that is mid-pull still has its asset.
+          gh release view brain-index --json assets --jq '[.assets[] | select(.name | startswith("brain-index_")) | {name, createdAt, base: (.name | sub("\\.[0-9]+$"; ""))}] | group_by(.base) | sort_by(map(.createdAt) | max) | .[:-2][][].name' \
+            | while read -r name; do gh release delete-asset brain-index "$name" --yes; done
+      - name: Carry on when the budget ran out
+        run: |
+          if [ "$(jq -r .report.incomplete "$RUNNER_TEMP/pack.json")" = "true" ]; then
+            echo "The index is not complete: starting the workflow again to carry on."
+            gh workflow run brain.yml --ref "$GITHUB_REF_NAME"
+          fi

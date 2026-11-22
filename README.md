@@ -10,12 +10,12 @@ Made by [Saankofi](https://saankofi.com) and [PO2 Academy](https://www.po2academ
 
 ### Less is more
 
-The bundle is small on purpose: five skills, a few short docs, one config block. Every line in a skill should change behaviour; a line that changes nothing when deleted gets deleted. Why:
+The bundle is small on purpose: five skills, a few short docs, one config block, and an optional sixth skill, `brain`, with one downloaded binary of its own. Every line in a skill should change behaviour; a line that changes nothing when deleted gets deleted. Why:
 
 - **Strong models already know the craft.** They can write a test, shape a module and debug a failure. Spelling that out adds nothing, and a fixed recipe overrides judgement that is often better than the recipe.
 - **Every line costs attention.** Skill text is loaded on every run and competes with the task. The more a skill says, the less weight each line gets, so the lines that matter get lost among the ones that don't.
 - **Process ages; direction doesn't.** Step-by-step instructions written around one model's weaknesses become dead weight, or get in the way, with the next model. Goals, boundaries and a definition of done stay true.
-- **You can read all of it.** The whole bundle reads in one sitting, so you know what the agent was told and can see why it did what it did.
+- **You can read all of it.** The skills, the docs and the config read in one sitting, so you know what the agent was told and can see why it did what it did. The one piece of code the agent runs, the optional `brain` binary, lives in `brain/`; nothing else depends on it.
 
 The same goes for what the bundle produces. It takes the lightest route that's safe (a one-line fix is just done; only bigger work gets a feature doc), keeps a few short docs rather than a wiki, deletes acceptance tests once they pass, and keeps the test suite fast. Less to maintain, less to drift out of date, less for the next session to read.
 
@@ -84,7 +84,7 @@ In Claude Code:
 npx skills add po2studio/supercharge -g -a claude-code
 ```
 
-This installs into `~/.claude/skills`; leave out `-g` for one project's `.claude/skills`. Check by typing `/supercharge` in a session, or run `/skills`; update with `npx skills update -g`. That's the whole install: no plugin, agent files, settings or hooks, and nothing beyond `git` and `gh`.
+This installs into `~/.claude/skills`; leave out `-g` for one project's `.claude/skills`. Check by typing `/supercharge` in a session, or run `/skills`; update with `npx skills update -g`. That's the whole install: no plugin, agent files, settings or hooks, and nothing beyond `git` and `gh`. The optional `brain` skill downloads one binary the first time you use it, after you say `go` (see [Brain](#brain)); leave it out at install and nothing else changes.
 
 Claude Code needs v2.1.283 or later, where auto mode is the starting permission mode. On an older version, or where auto mode isn't the starting mode, start with `claude --permission-mode auto`. Claude Code is supported but untested: it stays that way until a run in it is written up in [`runs/`](runs/).
 
@@ -100,6 +100,17 @@ docs: docs                   # folder for the docs, ADRs and feature docs
 ```
 
 Missing keys take the defaults.
+
+One more key is optional and never part of the block `living-docs` writes: `brain:`, the outside folders the `brain` skill reads beside the project's docs, none by default. Each entry is a `path` (absolute, `~/…`, or relative to the repo) and an optional `update`:
+
+```yaml
+brain:
+  - path: ~/brains/client-a
+    update: true                # agents keep this source's documents true
+  - path: ~/Dropbox/ClientA/Policies
+```
+
+`update` defaults to `false`: a source is only read. Any number of sources may set it (see [Brain](#brain)); the project's own docs are never written by the brain. `/brain` never writes the key, and asked to add a source it tells you the lines to add. No skill asks for it as a missing key; a committed `brain:` should use paths every teammate has (`~/…` or relative). Without it the brain reads only the project's own docs, and without the `brain` skill every skill behaves as it did before.
 
 ### `risk`
 
@@ -174,9 +185,37 @@ To build an existing plan:
 | `adr` | Records a decision in `docs/adr/NNNN-*.md` |
 | `build-slice` | Builds one slice to done: tests, end-to-end check, review, PR, green CI, docs updated |
 | `drive-feature` | Runs `build-slice` across a feature's slices, ticks each on the feature issue as it merges, then reports once |
+| `brain` | Optional. Answers a question from the project's docs and the folders it lists, with paths and dates, using one downloaded binary (176 MB); with an `update: true` source it also keeps those documents true after each answer and merge |
 
 Each skill works on its own; `supercharge` and `drive-feature` start the others, and otherwise they coordinate only through the files above and their GitHub issues.
 Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`, the `github` tool), plus `gh` for issues, which the `github` tool can't create; in Claude Code it uses subagents, a headless browser and `gh`. If one is missing, the skill uses an equivalent, or stops and says so. No equivalent replaces a fresh subagent (not a fork) or a reviewer on a different model.
+
+## Brain
+
+Optional. `/brain <question>` answers from your project's own docs and any folders you list as sources, and says which files and dates it found the answer in, for example `/brain why did we add a second phone field to signup?`. It needs no API key and installs nothing but one binary. Indexing, embedding and search all run on your machine (a brain on GitHub may first pull the index its own CI built, see below); the passages the agent reads to answer go to your model provider, like any file it reads.
+
+- **Install:** `brain` comes with the bundle; leave it out at install and nothing else changes. Its first use downloads one binary (about 176 MB, from this repo's releases, sha256-checked, cached in `~/.cache/supercharge/brain/<version>/`) for Linux x64 or arm64 (glibc 2.34 or newer) or macOS arm64 or x64.
+- **Sources:** installing the skill turns the brain on for the project you're in, with nothing to configure. The project is always a source, read in place: its docs folder (the `docs` key), `README.md` and `AGENTS.md`. Outside folders are opt-in, listed per project under `brain:` in its `AGENTS.md` (see [Config](#config)), so an agency's clients stay in separate brains: a search covers only the current project and the sources it lists. A source can be any folder of documents, flat or nested, a synced folder (Dropbox, Drive) included.
+- **Setup:** the first `/brain` in a project shows the download size and the cache path, and waits for `go`. Then it downloads, checks the checksum (a mismatch aborts and runs nothing), indexes and answers. It never asks where your documents are and writes nothing into the project or any source, only under `~/.cache/supercharge/`. Asked to add a source, it tells you the lines to add to `AGENTS.md` and leaves the edit to you.
+- **Search:** one command, `brain search "<question>"`. It brings the index up to date, then searches by meaning (a question that shares no words with its answer, in any language, Icelandic included) on the question as asked, and adds the best full-text matches of any ID, code, acronym or quoted phrase in it, so an invoice number is found by its number. It returns the best files. The agent runs it in a small-model subagent (so snippets stay out of your session), rephrases up to three times, and answers in at most 10 lines with paths, the source and dates. A project ADR whose status line says `superseded by` comes after the current ones, marked with what replaced it; one that was `amended by` others comes with them.
+- **Before it asks:** `supercharge` searches the brain before it asks you a business question, and cites what a document already settles instead of asking again.
+- **Keeping documents true:** `update: true` on a source means agents keep its documents true. After your `go`, and after every merge into `main` (whichever skill merged), a builder subagent searches those sources for the documents your answers or the shipped work make untrue and edits them in place, appending one line under a `## History` heading at the end of each: the date, what changed and where it was decided. In a git repo it commits and pushes to the default branch; elsewhere it just saves, and your synced folder's own versions are the way back. It edits Markdown and plain text only: an out-of-date Word file, PDF or spreadsheet is reported, never edited, and the project's own docs change through PRs as before. A decision that no document covers, and that a future agent would undo or ask about, becomes a new document in the first `update: true` source listed. Writing `update: true` is the consent: nothing is asked first, any number of sources may set it, and with none nothing is written anywhere.
+- **Index:** one SQLite file per source under `~/.cache/supercharge/index/<source-hash>/`, never inside a project or a source, so a synced folder is safe; the project's docs count as one source, and projects that list the same source share its index. A search runs over the project's index and its sources', fused by rank. It embeds only files whose content changed; a first index runs at about 12 chunks a second on a 6-core laptop CPU, about 30 on an Apple Silicon MacBook.
+- **Big brains, indexed once:** when an `update: true` source is a GitHub repo, the workflow the skill adds builds the index of that repo's own files on every push to its default branch and publishes it as an asset of a release called `brain-index`, keyed by the commit, the model and the binary version; it never holds a project's docs. A machine with no index for such a source runs `brain index` and pulls the newest one (with the `gh` it already has), then embeds only the files that differ from that commit, and the current project's docs, which are never shared. With no match (another model or binary version), no published index yet, no `gh` or no network, it says why and builds the index itself, as before. Over 1.9 GB the asset goes up in parts, under the 2 GiB a release asset may hold, and a first build of a brain too big for one CI job (6 hours; it runs on your Actions minutes, and a first build of 100 000 documents is hours of them) stops at its budget, publishes what it has and starts the workflow again to carry on; a pulled index that is still partial is finished by the next `brain index`. The index is a release asset rather than an Actions artifact: artifacts expire (after 90 days by default) and count against a storage quota that a free plan puts at 500 MB, where a release asset has neither, and for the same 100 MB index a release asset came down in 14 s where the artifact took 37 s ([the measurements](runs/2026-11-22-brain-shared-index.md)).
+- **What it reads:** whatever someone dropped in a source, flat or nested: Markdown and plain text, HTML, PDF (its text layer), Word, Excel, PowerPoint, OpenDocument (`.odt`, `.ods`, `.odp`), RTF, email (`.eml`, `.mbox`), CSV and TSV, JSON, YAML and source code. Tables and CSV are cut into row groups that each repeat the header, transcripts by speaker turn, and an email keeps who wrote when and drops the quoted replies. A file with no text to give (a scan, an image, audio, video, an archive, an encrypted or corrupt file) is listed by `brain stats` as not converted, with the reason, and never stops the index; there is no OCR. A text file over 1 MiB (the same for what a PDF or Office file converts to), or one it cannot read, is listed there as left out, never skipped silently. Exact copies and near-identical versions of a document (`v1`, `v2`, `final_final.docx`) give one hit, the newest, with the others in its `versions`. Conversions are cached beside the index, never in a source.
+- **Measured:** on 49 golden questions an agent with the brain answered 47 right on both a 93-file and a 742-file corpus, against 45 and 44 for an agent with only `grep`; on the large corpus it used a quarter fewer tokens, and it was about a second slower per question ([the run](runs/2026-11-21-brain-vs-grep.md)).
+- **The binary alone:** after the first `/brain` it is at `~/.cache/supercharge/brain/<version>/brain` (put it on your `PATH`, or `gh release download brain-v<version> --repo po2studio/supercharge --pattern brain-linux-x64` for your platform). Run it inside a project, with no flags, and it resolves that project's sources itself:
+
+  ```sh
+  cd ~/code/my-project
+  brain search "why do we store money as integers"
+  brain search "INV-2024-0042" --json   # one hit per file: source, path, file, date, snippet, versions
+  brain stats                           # the sources it sees, and what is indexed in each
+  brain bench --chunks 100000           # a synthetic brain of that many chunks: search p50, and indexing chunks/s with the real model
+  brain pack --out dist                 # in a brain repo: its index as the asset(s) to publish (what the CI workflow runs)
+  ```
+
+  `search` indexes what changed first (`brain index` does only that, for CI and debugging), and nothing is ever written into a project or a source. `--repo <folder>` names the project from anywhere, and `--source <folder>` (repeat for several) reads those folders instead of the `brain:` list. `brain eval` indexes the project in `brain/eval/project/` and the corpus in `brain/eval/corpus/` as two sources, asks every golden question as a plain question, and prints recall@5, MRR, search latency and indexing speed for full-text only, meaning only, and both, against the committed baseline; CI fails on a regression, or when both together find fewer answers than the better half. `brain bench` builds its synthetic brain in the cache folder (about 5 GB per million chunks) and removes it; `brain/scripts/scale.sh <binary>` runs the two big measurements, 1M chunks and a 100k-document brain's first index from a shared one, with a released binary and nothing else.
 
 ## Models
 
@@ -186,19 +225,21 @@ There are three jobs, and they need different things:
 - **Building** (`build-slice`): good technical judgement. It uses most of the tokens, so this is where a cheaper model pays off. A slice or ticket started from its issue is built in a builder subagent too, so the session's model doesn't build.
 - **Reviewing** (omp's `reviewer` agent, or a fresh subagent in Claude Code): an independent check. Always a different model from the builder, ideally from a different company. It's cheap.
 
-In omp the agent picks the agent (`task`, `reviewer`, `scout`), never the model: omp's model roles set each agent's model. Each job runs on a role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`scout` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
+In omp the agent picks the agent (`task`, `reviewer`, `sonic`), never the model: omp's model roles set each agent's model. Each job runs on a role: the session (planning and driving) on `default`, builders (omp's `task` agent) on `task`, and the reviewer on `slow`. omp's small jobs (`sonic` searches, session titles) run on `smol`. Set them in `~/.omp/agent/config.yml` (check with `omp config get modelRoles`):
 
 ```yaml
 modelRoles:
   default: anthropic/claude-opus-5.5     # plans and drives
   task: anthropic/claude-sonnet-5.5      # builds
   slow: openai-codex/gpt-6.1-sol         # reviews
-  smol: anthropic/claude-haiku-5.5       # scouts, titles
+  smol: anthropic/claude-haiku-5.5       # sonic searches, titles
 ```
 
 Without `task`, builders run on `default`; without `smol`, so do the small jobs, at the planning model's price. Keep `task` and `slow` different. On a subscription, choose by quota rather than price: a cheaper builder still saves most of it, because building uses most of the tokens.
 
 **In Claude Code** there are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket is built on `sonnet` and reviewed by `opus`, whatever model the session runs on. The cross-company reviewer is omp-only. If no such reviewer can be started, `build-slice` stops and says so.
+
+**The `brain` skill's searches** run in a small-model subagent, the small job: omp's `sonic` on `smol` (`scout` is read-only and can't run the binary), and in Claude Code a fresh subagent on `haiku`. Finding a file is cheap work, and the snippets it reads never enter your session.
 
 Tested in [`runs/`](runs/) (✓ good, ✗ not good enough, ? untested, – not worth testing for that job; prices per million tokens in/out on OpenRouter, October 2026). The frontier models (Fable, Opus, Astra, Sol) qualify for every job without a run of their own: they're at least as strong as the models that passed. Sonnet 5.5 builds in the owner's daily use (2026-11-12), without a write-up.
 

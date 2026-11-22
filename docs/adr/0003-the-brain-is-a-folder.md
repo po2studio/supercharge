@@ -1,6 +1,6 @@
 # 0003: The brain is a folder; raw files are the truth
 
-Status: accepted
+Status: accepted; amended by [0004](0004-brain-sources-per-project.md) and [0005](0005-agents-keep-documents-true.md)
 
 ## Context
 

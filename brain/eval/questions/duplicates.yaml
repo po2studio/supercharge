@@ -1,0 +1,17 @@
+# Three versions of one agreement, and two copies of one FAQ. The newest must be found, and the
+# older versions must not take places in the top five (`absent`).
+- id: dup-notice
+  question: "How many days notice does either party have to give to end the partner agreement?"
+  expect: [duplicates/partner-agreement_final_final.docx]
+  absent: [duplicates/partner-agreement_v1.docx, duplicates/partner-agreement_v2.docx]
+  answer: "90 days (30 in v1, 60 in v2)."
+- id: dup-commission
+  question: "What commission does Hrafn pay the partner on the net booking value?"
+  expect: [duplicates/partner-agreement_final_final.docx]
+  absent: [duplicates/partner-agreement_v1.docx, duplicates/partner-agreement_v2.docx]
+  answer: "12 percent (8 in v1, 10 in v2)."
+- id: dup-insurance
+  question: "Until when can a guest add travel insurance to a booking, and what does it cost then?"
+  expect: [duplicates/travel-insurance-faq.md]
+  absent: [duplicates/archive/travel-insurance-faq.md]
+  answer: "Until 24 hours before departure; 6 percent of the booking value."

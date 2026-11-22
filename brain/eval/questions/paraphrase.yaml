@@ -1,0 +1,48 @@
+- id: pets-office
+  question: "Can I bring my dog to work?"
+  expect: [policies/animals-on-premises.md]
+  answer: "Only certified assistance dogs, with approval from Facilities at least 5 working days ahead."
+- id: sick-note
+  question: "Do I need a doctor's note if I'm ill for a day?"
+  expect: [policies/sick-leave.md]
+  answer: "No. Up to two consecutive working days only need notice to the team lead before 09:00; from the third day a physician attestation is required."
+- id: bike-subsidy
+  question: "Does the company help pay for my bicycle?"
+  expect: [policies/bike-commute.md]
+  answer: "Yes, up to ISK 45,000 per calendar year for equipment and repairs for commuters on two wheels."
+- id: newborn-pay
+  question: "How much of my pay do I keep when I'm off with a newborn?"
+  expect: [policies/parental-leave.md]
+  answer: "100% of base salary for the first three months of parental leave; months four to six are paid by the state fund only."
+- id: overseas-job
+  question: "Can I do my job from a beach in Spain for a month?"
+  expect: [policies/remote-work.md, icelandic/heimavinna.md]
+  answer: "Not for a month: staying outside Iceland while on duty is capped at 20 days per calendar year, with at least two weeks notice to the People team."
+- id: login-length
+  question: "How long does my login secret need to be?"
+  expect: [it/password-policy.md]
+  answer: "At least 14 characters."
+- id: scam-mail
+  question: "Something in my inbox looks like a scam; where should it go?"
+  expect: [it/phishing-guide.md]
+  answer: "Forward it as an attachment to phishing@hrafn.example, then delete it."
+- id: new-computer
+  question: "How often do I get a new computer?"
+  expect: [it/laptop-policy.md]
+  answer: "Notebooks are replaced every 36 months."
+- id: gather-alarm
+  question: "Where do we gather if the alarm goes off?"
+  expect: [misc/fire-drill.md]
+  answer: "At the green lamppost in the car park behind the building."
+- id: overseas-room
+  question: "What is the most I can spend on a room when I go overseas?"
+  expect: [policies/travel-expenses.md]
+  answer: "EUR 160 per night for lodging outside Iceland."
+- id: back-out
+  question: "Until when can someone back out of their holiday without losing money?"
+  expect: [product/cancellation-faq.md, icelandic/algengar-spurningar-bokanir.md]
+  answer: "Free cancellation up to 48 hours before departure."
+- id: scrub-identity
+  question: "How long before a former client's identity is scrubbed from your systems?"
+  expect: [legal/gdpr-data-retention.md]
+  answer: "Customer records are anonymised 36 months after the last booking (deletion requests are done within 30 days)."

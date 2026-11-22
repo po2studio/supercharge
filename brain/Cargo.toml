@@ -1,0 +1,33 @@
+[package]
+name = "brain"
+version = "0.7.1"
+edition = "2021"
+description = "Index and search a folder of documents on the CPU, offline"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+calamine = "0.38.0"
+clap = { version = "4", features = ["derive"] }
+csv = "1.4.0"
+encoding_rs = "0.8.44"
+flate2 = "1"
+libc = "0.2"
+mail-parser = "1.0.1"
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries"] }
+pdf-extract = "0.12.1"
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+sha2 = "0.10"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
+
+[build-dependencies]
+cc = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

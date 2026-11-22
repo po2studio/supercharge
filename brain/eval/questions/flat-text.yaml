@@ -1,0 +1,24 @@
+- id: flat-paylink-key
+  question: "Who is responsible for rotating the Paylink sandbox key, and when does it expire?"
+  expect: [meetings/2025-02-04-standup.txt]
+  answer: "Arnar owns the rotation; the key expires on 28 February."
+- id: flat-glacier-discount
+  question: "What price cut does Glacier Guides get for renewing early?"
+  expect: [customers/glacier-guides-renewal.txt]
+  answer: "8% off the year (about EUR 32,000 instead of EUR 34,800) if they sign before 31 January."
+- id: flat-search-down
+  question: "Why were customers' search pages unavailable in the early hours of 9 January?"
+  expect: [it/outage-chat.txt]
+  answer: "The TLS certificate on the search-edge proxy expired because auto-renewal failed (a firewall change blocked the ACME challenge); outage lasted 47 minutes."
+- id: flat-venue
+  question: "If an operator takes legal action against us, which venue hears the case?"
+  expect: [legal/terms-summary.txt]
+  answer: "The District Court of Reykjavík, under Icelandic law."
+- id: flat-ticket
+  question: "What was the root cause of ticket TCK-88214?"
+  expect: [customers/ticket-export.txt]
+  answer: "A stale token on the calendar integration (iCal feed not updating); resolved 14 January after regenerating the token."
+- id: flat-late-interest
+  question: "What interest do we charge on overdue invoices?"
+  expect: [finance/payment-terms-email.txt]
+  answer: "1.2% per month, calculated daily."

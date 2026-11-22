@@ -1,0 +1,1 @@
+This file is outside the docs folder, so Selkie's docs index never reads it. It talks about the gold-plated teapot nobody may mention.

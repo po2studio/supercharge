@@ -1,6 +1,6 @@
 ---
 name: build-slice
-description: Build one vertical slice to done — tests first, a real end-to-end check, an independent review by a different model, a PR with green CI, and updated docs. Use for a ready-for-agent issue, a slice from a feature doc, or a small well-defined request.
+description: Build one vertical slice to done. Tests first, a real end-to-end check, an independent review by a different model, a PR with green CI, and updated docs. Use for a ready-for-agent issue, a slice from a feature doc, or a small well-defined request.
 ---
 
 # build-slice
@@ -38,6 +38,7 @@ In Orca (`ORCA_CLI_COMMAND` is set; never run a bare `orca` elsewhere: on Linux 
 - If the same failure or review finding survives three fixes, stop and say so.
 - Merge into a feature branch yourself. A PR into `main` waits for the human's approval if `approve` includes `merge`; once they approve, check CI is green and merge it yourself. Then delete this slice's branch and any worktree added for it (in Orca through `worktree rm`, not `git worktree remove`), once everything in them is merged: never anything else, never anything holding unmerged work, and never the worktree your own session runs in or the branch checked out there. Keep a worktree that isn't merged, and say where it is in the report. At the stop, say exactly what to do, what to check, and what happens after ("reply `go` and I'll …").
 - Unless `drive-feature` runs you, if every other slice of its feature is done, end your stop and report with: start feature issue #N in Orca (or run `/drive-feature <its URL>`) to finish. `drive-feature` skips the done slices and only does the finish.
+- With the `brain` skill installed and its binary already cached, before removing or reworking code whose purpose isn't clear, search it for why and cite what you find in the decision ledger; when you merge into `main` yourself, run its update step right after and relay its report.
 - Don't work around security controls (commit signing, auth, hooks). Stop and say so.
 - If a feature named here isn't available, use an equivalent, or stop and say so. No equivalent replaces "not a fork" or "a different model".
 

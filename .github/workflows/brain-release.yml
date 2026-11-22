@@ -1,0 +1,98 @@
+name: brain release
+
+# A `brain-v*` tag builds the binary for the 4 platforms and publishes a GitHub pre-release with the
+# binaries and their sha256. Run by hand, it only builds (artifacts, no release).
+#
+# ONNX Runtime 1.22 comes as pyke's prebuilt static libraries for all four platforms, through the
+# `ort` crate (2.0.0-rc.10); later releases have none for macOS x64.
+on:
+  push:
+    tags: ["brain-v*"]
+  workflow_dispatch:
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: "13.4"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { name: macos-arm64, os: macos-15, target: aarch64-apple-darwin }
+          - { name: macos-x64, os: macos-15-intel, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: brain
+          key: ${{ matrix.target }}
+      # build.rs fetches the model once; keep it so Hugging Face's rate limit can't fail a release.
+      - uses: actions/cache@v4
+        with:
+          path: brain/assets
+          key: brain-assets-${{ hashFiles('brain/build.rs') }}
+      # Built on Ubuntu 22.04 so the binary needs only glibc 2.34, and with libstdc++ linked in.
+      - name: Static C++ runtime, openssl headers for the build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+          {
+            echo "ORT_CXX_STDLIB=static=stdc++"
+            echo "RUSTFLAGS=-C link-arg=-static-libgcc -L native=$(dirname "$(gcc -print-file-name=libstdc++.a)")"
+          } >> "$GITHUB_ENV"
+      - name: Build
+        working-directory: brain
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          mkdir dist
+          cp brain/target/${{ matrix.target }}/release/brain dist/brain-${{ matrix.name }}
+          cd dist
+          if command -v sha256sum >/dev/null; then sha256sum brain-${{ matrix.name }} > brain-${{ matrix.name }}.sha256; else shasum -a 256 brain-${{ matrix.name }} > brain-${{ matrix.name }}.sha256; fi
+          ls -la
+      - name: Runs alone, with no environment
+        run: brain/scripts/smoke.sh dist/brain-${{ matrix.name }}
+      - name: No C++ runtime, glibc 2.34 or older (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ldd dist/brain-${{ matrix.name }}
+          ! ldd dist/brain-${{ matrix.name }} | grep -F 'libstdc++'
+          newest=$(objdump -T dist/brain-${{ matrix.name }} | grep -v ' w ' | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1)
+          echo "needs $newest"
+          test "$(printf '%s\nGLIBC_2.34\n' "$newest" | sort -V | tail -1)" = GLIBC_2.34
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brain-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/brain-v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brain-*
+          path: dist
+          merge-multiple: true
+      - run: ls -la dist
+      - name: Publish the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(ls dist/brain-*.sha256 | wc -l)" = 4
+          cat dist/*.sha256 > dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+            --title "brain ${GITHUB_REF_NAME#brain-v}" \
+            --notes "The \`brain\` binary for the optional \`brain\` skill: linux x64 and arm64, macOS arm64 and x64. Each file has a .sha256; SHA256SUMS lists them all."

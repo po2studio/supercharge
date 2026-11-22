@@ -1,0 +1,16 @@
+# A project's ADRs and BUSINESS.md. An ADR that a later one superseded may come back, marked, but
+# only after the one that replaced it: `after` names it, and the eval fails if it ranks above
+# the first file in `expect`.
+- id: dec-adr-superseded
+  question: "At what hour do Selkie's reminders go out?"
+  expect: ["project:docs/adr/0004-customer-chosen-hour.md"]
+  after: ["project:docs/adr/0003-reminder-hour-08.md"]
+  answer: "The hour each customer picks, 09:00 by default. The fixed 08:00 of ADR 0003 was superseded."
+- id: dec-adr-amended
+  question: "Which currencies can Selkie handle invoices in?"
+  expect: ["project:docs/adr/0005-two-currencies.md", "project:docs/adr/0006-add-nok.md"]
+  answer: "ISK and EUR (ADR 0005), and NOK since the amendment of ADR 0006."
+- id: dec-business-md
+  question: "Who pays for Selkie, and who never logs in?"
+  expect: ["project:docs/BUSINESS.md"]
+  answer: "The bookkeeper pays; the clients whose invoices are chased never log in."

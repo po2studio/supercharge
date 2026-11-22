@@ -1,0 +1,52 @@
+- id: is-remote
+  question: "Hversu marga daga í viku má ég vinna að heiman?"
+  expect: [icelandic/heimavinna.md, policies/remote-work.md]
+  answer: "Allt að þremur dögum í viku."
+- id: is-office-move
+  question: "Hvenær flytur fyrirtækið á Fiskislóð?"
+  expect: [icelandic/fundargerd-2025-01-21.md, meetings/2025-01-14-board-notes.md]
+  answer: "Þann 1. júní 2025."
+- id: is-booking-change
+  question: "Hvað kostar að breyta bókun?"
+  expect: [icelandic/algengar-spurningar-bokanir.md]
+  answer: "2.500 krónur á bókun, hægt allt að 24 klukkustundum fyrir brottför."
+- id: is-first-day
+  question: "Hvenær á ég að mæta fyrsta vinnudaginn og hver afhendir mér fartölvuna?"
+  expect: [icelandic/nyradning-leidbeiningar.md, people/onboarding-checklist.md]
+  answer: "Klukkan 9:00 í móttökuna; Davíð Árnason afhendir fartölvuna."
+- id: is-lunch
+  question: "Hvað kostar hádegismaturinn í mötuneytinu?"
+  expect: [icelandic/motuneyti.md]
+  answer: "650 krónur; á föstudögum er maturinn ókeypis."
+- id: is-xmas
+  question: "Hvenær er jólahlaðborðið og hvar er það haldið?"
+  expect: [icelandic/jolahladbord-tolvupostur.txt]
+  answer: "Föstudaginn 6. desember klukkan 19:00 í sal Veiðihússins við Gróttu."
+- id: is-education
+  question: "Hversu hár er árlegur menntastyrkur?"
+  expect: [icelandic/menntastyrkur.md, meetings/2024-10-15-all-hands.md]
+  answer: "150.000 krónur á ári á hvern starfsmann."
+- id: is-whale
+  question: "Hver er tengiliður hjá Hval og Firði?"
+  expect: [icelandic/hvalaskodun-vidskiptavinur.md]
+  answer: "Kristján Þór Magnússon framkvæmdastjóri."
+- id: is-red-warning
+  question: "Hvað á ég að gera ef rauð veðurviðvörun er í gildi?"
+  expect: [icelandic/vedurvidvaranir.md]
+  answer: "Skrifstofan er lokuð og allir vinna heima."
+- id: en-usb
+  question: "Can I plug a USB stick into my work laptop?"
+  expect: [icelandic/oryggisstefna.md]
+  answer: "No, USB memory sticks are banned on work computers; use the company cloud storage to move files."
+- id: en-dagpeningar
+  question: "What is the daily allowance for a domestic day trip lasting over six hours?"
+  expect: [icelandic/dagpeningar.md]
+  answer: "ISK 8,200."
+- id: is-hotel-cap
+  question: "Hver er hámarkið fyrir hótelgistingu í Reykjavík á nótt?"
+  expect: [policies/travel-expenses.md]
+  answer: "22.000 krónur á nótt (ISK 22,000)."
+- id: is-ceo
+  question: "Hver er forstjóri Hrafns?"
+  expect: [people/org-chart.md]
+  answer: "Sigríður Hallgrímsdóttir."
