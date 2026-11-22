@@ -3,37 +3,48 @@ mod doc;
 mod embed;
 mod eval;
 mod index;
+mod init;
 mod search;
+mod sources;
 mod store;
 mod vecs;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use embed::Embedder;
+use search::Opened;
+use serde::Serialize;
+use sources::{Flags, Resolved, Source};
 use std::path::{Path, PathBuf};
 use store::Store;
 
 #[derive(Parser)]
 #[command(
     version,
-    about = "Index a folder of documents and search it, on the CPU, offline"
+    about = "Index and search a project's docs and the folders it lists as sources, on the CPU, offline",
+    long_about = "Run inside a project: the project's docs folder (the `docs` key in AGENTS.md), README.md and AGENTS.md \
+are read in place, and so is each folder in the `brain:` list of AGENTS.md's `## Supercharge` block. \
+Indexes live under ~/.cache/supercharge/; nothing is written into a project or a source, except by `brain init`."
 )]
 struct Cli {
-    /// The brain: the folder to index and search.
-    #[arg(long, global = true, default_value = ".")]
-    root: PathBuf,
+    /// The project's folder; by default the git repo (or the folder with an AGENTS.md) containing the current directory.
+    #[arg(long, global = true)]
+    repo: Option<PathBuf>,
+    /// A folder to read as a source, read-only; repeat for several. Replaces the `brain:` list.
+    #[arg(long, global = true)]
+    source: Vec<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Bring the index up to date: embed only the files whose content changed.
+    /// Bring the index of each source up to date: embed only the files whose content changed.
     Index {
         #[arg(long)]
         json: bool,
     },
-    /// Search the index. Give --terms (full-text, FTS5 syntax), --about (a plain-language description), or both.
+    /// Search the project and its sources. Give --terms (full-text, FTS5 syntax), --about (a plain-language description), or both.
     Search {
         /// Full-text query: words are ANDed; use OR between alternatives, "quotes" for phrases.
         #[arg(long)]
@@ -46,15 +57,21 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// What is indexed, and what the last index run did.
+    /// The sources this project reads, what is indexed in each, and what the last index run did.
     Stats {
         #[arg(long)]
         json: bool,
     },
+    /// In the `update: true` source, create BRAIN.md, decisions/, notes/ and projects/ if missing. The only command that writes into a source.
+    Init,
     /// Index a corpus, ask its golden questions, report recall@5, MRR, latency and speed; fail on a regression.
     Eval {
+        /// The outside source.
         #[arg(long, default_value = "eval/corpus")]
         corpus: PathBuf,
+        /// The project, whose docs are the second source.
+        #[arg(long, default_value = "eval/project")]
+        project: PathBuf,
         #[arg(long, default_value = "eval/questions")]
         questions: PathBuf,
         #[arg(long, default_value = "eval/baseline.json")]
@@ -74,34 +91,79 @@ enum Command {
 }
 
 fn main() {
+    // `brain search | head` should end quietly, not panic on the closed pipe.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     if let Err(e) = run() {
         eprintln!("brain: {e:#}");
         std::process::exit(1);
     }
 }
 
-fn root(cli: &Cli) -> Result<PathBuf> {
-    cli.root
-        .canonicalize()
-        .with_context(|| format!("the brain folder {} does not exist", cli.root.display()))
+/// What the current directory and the flags say to read; a source this machine lacks is warned about.
+fn resolve(cli: &Cli) -> Result<Resolved> {
+    let cwd = std::env::current_dir().context("cannot read the current directory")?;
+    let resolved = sources::resolve(
+        &cwd,
+        &Flags {
+            repo: cli.repo.clone(),
+            sources: cli.source.clone(),
+        },
+    )?;
+    for warning in &resolved.warnings {
+        eprintln!("brain: warning: {warning}");
+    }
+    Ok(resolved)
+}
+
+/// One source's part of an index run.
+#[derive(Serialize)]
+struct Named {
+    source: String,
+    #[serde(flatten)]
+    report: index::Report,
+}
+
+/// All sources' index runs: their sum, and each source's own.
+#[derive(Serialize)]
+struct Combined {
+    #[serde(flatten)]
+    total: index::Report,
+    sources: Vec<Named>,
 }
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
         Command::Index { json } => {
-            let root = root(&cli)?;
-            let mut store = Store::create(&store::index_path(&root)?, &root)?;
+            let resolved = resolve(&cli)?;
             let mut embedder = embed::Onnx::load()?;
-            let r = index::index(&root, &mut store, &mut embedder, true)?;
+            let mut combined = Combined {
+                total: index::Report::default(),
+                sources: Vec::new(),
+            };
+            for source in resolved.live() {
+                let mut store = Store::create(&store::index_path(&source.key())?, &source.root)?;
+                let report = index::index(source, &mut store, &mut embedder, true)?;
+                combined.total.add(&source.label, &report);
+                combined.sources.push(Named {
+                    source: source.label.clone(),
+                    report,
+                });
+            }
             if *json {
-                println!("{}", serde_json::to_string(&r)?);
+                println!("{}", serde_json::to_string(&combined)?);
             } else {
-                println!(
-                    "{} files, {} chunks; {} files changed, {} removed, {} chunks embedded in {:.1}s",
-                    r.files, r.chunks, r.files_changed, r.files_removed, r.embedded_chunks, r.seconds
-                );
-                print_skipped(&r.skipped);
+                for n in &combined.sources {
+                    let r = &n.report;
+                    println!(
+                        "{}: {} files, {} chunks; {} files changed, {} removed, {} chunks embedded in {:.1}s",
+                        n.source, r.files, r.chunks, r.files_changed, r.files_removed, r.embedded_chunks, r.seconds
+                    );
+                }
+                print_skipped(&combined.total.skipped);
             }
         }
         Command::Search {
@@ -110,14 +172,17 @@ fn run() -> Result<()> {
             k,
             json,
         } => {
-            let root = root(&cli)?;
-            let path = store::index_path(&root)?;
-            let Some(store) = Store::open(&path)? else {
-                bail!(
-                    "no index for {} yet (or it is out of date); run `brain index` first",
-                    root.display()
-                );
-            };
+            let resolved = resolve(&cli)?;
+            let mut opened = Vec::new();
+            for source in resolved.live() {
+                let Some(store) = Store::open(&store::index_path(&source.key())?)? else {
+                    bail!(
+                        "no index for {} yet (or it is out of date); run `brain index` first",
+                        source.label
+                    );
+                };
+                opened.push(Opened::new(source, store));
+            }
             let query = search::Query {
                 terms: terms.as_deref(),
                 about: about.as_deref(),
@@ -125,13 +190,13 @@ fn run() -> Result<()> {
             };
             let hits = if about.is_some() {
                 search::search(
-                    &store,
+                    &opened,
                     &mut embed::Onnx::load()?,
                     &query,
                     search::EXACT_LIMIT,
                 )?
             } else {
-                search::search(&store, &mut NoEmbedder, &query, search::EXACT_LIMIT)?
+                search::search(&opened, &mut NoEmbedder, &query, search::EXACT_LIMIT)?
             };
             if *json {
                 // One hit per line, so a tool that cuts long lines never swallows later hits.
@@ -148,8 +213,9 @@ fn run() -> Result<()> {
                         format!(" › {}", h.heading)
                     };
                     println!(
-                        "{}. {}{} ({}, score {:.3})",
+                        "{}. [{}] {}{} ({}, score {:.3})",
                         i + 1,
+                        h.source,
                         h.path,
                         heading,
                         h.date,
@@ -161,9 +227,23 @@ fn run() -> Result<()> {
                 }
             }
         }
-        Command::Stats { json } => stats(&root(&cli)?, *json)?,
+        Command::Stats { json } => stats(&resolve(&cli)?, *json)?,
+        Command::Init => {
+            let resolved = resolve(&cli)?;
+            let Some(source) = resolved.update_source() else {
+                println!("no source sets `update: true`: nothing to create, nothing written");
+                return Ok(());
+            };
+            let created = init::init(source)?;
+            if created.is_empty() {
+                println!("{}: nothing to create", source.label);
+            } else {
+                println!("{}: created {}", source.label, created.join(", "));
+            }
+        }
         Command::Eval {
             corpus,
+            project,
             questions,
             baseline,
             update_baseline,
@@ -174,6 +254,7 @@ fn run() -> Result<()> {
             eval::run(
                 &eval::Opts {
                     corpus,
+                    project,
                     questions,
                     baseline,
                     update_baseline: *update_baseline,
@@ -188,65 +269,101 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn stats(root: &Path, json: bool) -> Result<()> {
-    let path = store::index_path(root)?;
-    let Some(store) = Store::open(&path)? else {
-        bail!(
-            "no index for {} yet (or it is out of date); run `brain index` first",
-            root.display()
-        );
-    };
-    let (files, chunks) = store.counts()?;
-    let parse = |key: &str| -> Result<serde_json::Value> {
-        Ok(store.meta(key)?.map_or(serde_json::Value::Null, |s| {
-            serde_json::from_str(&s).unwrap_or_default()
-        }))
-    };
+fn stats(resolved: &Resolved, json: bool) -> Result<()> {
+    let mut sources = Vec::new();
+    let (mut files, mut chunks) = (0, 0);
+    for source in resolved.live() {
+        let path = store::index_path(&source.key())?;
+        let Some(store) = Store::open(&path)? else {
+            sources.push(serde_json::json!({
+                "source": source.label,
+                "root": source.root,
+                "indexed": false,
+            }));
+            continue;
+        };
+        let (f, c) = store.counts()?;
+        files += f;
+        chunks += c;
+        let parse = |key: &str| -> Result<serde_json::Value> {
+            Ok(store.meta(key)?.map_or(serde_json::Value::Null, |s| {
+                serde_json::from_str(&s).unwrap_or_default()
+            }))
+        };
+        sources.push(serde_json::json!({
+            "source": source.label,
+            "root": source.root,
+            "indexed": true,
+            "update": source.update,
+            "index": path,
+            "index_bytes": std::fs::metadata(&path)?.len(),
+            "files": f,
+            "chunks": c,
+            "not_indexed": parse("not_indexed")?,
+            "last_index": parse("last_index")?,
+        }));
+    }
     let out = serde_json::json!({
-        "root": root,
-        "index": path,
-        "index_bytes": std::fs::metadata(&path)?.len(),
         "model": embed::MODEL_ID,
         "version": env!("CARGO_PKG_VERSION"),
         "files": files,
         "chunks": chunks,
-        "not_indexed": parse("not_indexed")?,
-        "last_index": parse("last_index")?,
+        "sources": sources,
     });
     if json {
         println!("{out}");
-    } else {
+        return Ok(());
+    }
+    println!(
+        "model      {} (binary {})",
+        embed::MODEL_ID,
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut skipped: Vec<String> = Vec::new();
+    for s in &sources {
         println!(
-            "brain      {}\nindex      {} ({} bytes)\nmodel      {} (binary {})",
-            root.display(),
-            path.display(),
-            out["index_bytes"],
-            embed::MODEL_ID,
-            env!("CARGO_PKG_VERSION")
+            "\n{}  {}",
+            s["source"].as_str().unwrap_or(""),
+            s["root"].as_str().unwrap_or("")
         );
-        println!("indexed    {files} files, {chunks} chunks");
-        let last = &out["last_index"];
+        if s["indexed"] != true {
+            println!("  not indexed yet; run `brain index`");
+            continue;
+        }
         println!(
-            "last run   {} files changed, {} removed, {} chunks embedded, {:.1}s",
+            "  index    {} ({} bytes){}",
+            s["index"].as_str().unwrap_or(""),
+            s["index_bytes"],
+            if s["update"] == true {
+                "; agents write here"
+            } else {
+                ""
+            }
+        );
+        println!("  indexed  {} files, {} chunks", s["files"], s["chunks"]);
+        let last = &s["last_index"];
+        println!(
+            "  last run {} files changed, {} removed, {} chunks embedded, {:.1}s",
             last["files_changed"],
             last["files_removed"],
             last["embedded_chunks"],
             last["seconds"].as_f64().unwrap_or(0.0)
         );
-        if let Some(m) = out["not_indexed"].as_object().filter(|m| !m.is_empty()) {
+        if let Some(m) = s["not_indexed"].as_object().filter(|m| !m.is_empty()) {
             let list: Vec<String> = m.iter().map(|(k, v)| format!("{v} .{k}")).collect();
-            println!("not indexed (no converter yet): {}", list.join(", "));
+            println!("  not indexed (no converter yet): {}", list.join(", "));
         }
-        let skipped: Vec<String> = last["skipped"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        print_skipped(&skipped);
+        skipped.extend(
+            last["skipped"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str())
+                .map(|v| format!("{}: {v}", s["source"].as_str().unwrap_or(""))),
+        );
     }
+    println!();
+    print_skipped(&skipped);
     Ok(())
 }
 
@@ -267,7 +384,7 @@ fn print_skipped(skipped: &[String]) {
 /// Mean embedding of every chunk in `corpus`, as little-endian f32.
 fn center(corpus: &Path, out: &Path) -> Result<()> {
     let mut embedder = embed::Onnx::load()?;
-    let files = index::walk(corpus)?.files;
+    let files = index::walk(&Source::outside("corpus", corpus))?.files;
     let mut sum = vec![0f32; embed::DIM];
     let mut n = 0f32;
     for file in files {

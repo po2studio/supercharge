@@ -65,12 +65,18 @@ pub fn cache_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".cache/supercharge"))
 }
 
-/// `<cache>/index/<root-hash>/index.sqlite`
-pub fn index_path(root: &Path) -> Result<PathBuf> {
-    let hash = format!("{:x}", Sha256::digest(root.to_string_lossy().as_bytes()));
+/// Names a source's index folder: the first 16 hex digits of the hash of its key
+/// (`Source::key`), so projects that list the same folder share one index.
+pub fn key_hash(key: &str) -> String {
+    let hash = format!("{:x}", Sha256::digest(key.as_bytes()));
+    hash[..16].to_string()
+}
+
+/// `<cache>/index/<source-hash>/index.sqlite`
+pub fn index_path(key: &str) -> Result<PathBuf> {
     Ok(cache_dir()?
         .join("index")
-        .join(&hash[..16])
+        .join(key_hash(key))
         .join("index.sqlite"))
 }
 
@@ -379,10 +385,10 @@ mod tests {
     }
 
     #[test]
-    fn the_index_lives_under_the_cache_keyed_by_the_root() {
+    fn the_index_lives_under_the_cache_keyed_by_the_source() {
         std::env::set_var("SUPERCHARGE_CACHE_DIR", "/tmp/sc-cache-test");
-        let a = index_path(Path::new("/x/brain")).unwrap();
-        let b = index_path(Path::new("/y/brain")).unwrap();
+        let a = index_path("/x/brain").unwrap();
+        let b = index_path("/y/brain").unwrap();
         assert_ne!(a, b);
         assert!(a.starts_with("/tmp/sc-cache-test/index"));
         assert!(a.ends_with("index.sqlite"));

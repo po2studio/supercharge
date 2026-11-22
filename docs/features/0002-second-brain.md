@@ -17,7 +17,7 @@ Hard requirements (owner, 2026-11-03):
 - **Measured:** complexity has to earn its place in numbers.
 
 ## Deliverables
-- **`brain` binary** (Rust, in this repo under `brain/`, released for 4 platforms): converts any file to text, chunks it, embeds it on the CPU with a multilingual model compiled in, and keeps one SQLite index (full-text plus vectors). Commands: `index`, `search`, `check`, `stats`, `eval`, `bench`. Decided in [ADR 0001](../adr/0001-one-binary-in-the-bundle.md) and [ADR 0002](../adr/0002-local-embeddings-one-sqlite-index.md).
+- **`brain` binary** (Rust, in this repo under `brain/`, released for 4 platforms): converts any file to text, chunks it, embeds it on the CPU with a multilingual model compiled in, and keeps one SQLite index per source (full-text plus vectors). Commands: `index`, `search`, `init`, `check`, `stats`, `eval`, `bench`. Decided in [ADR 0001](../adr/0001-one-binary-in-the-bundle.md) and [ADR 0002](../adr/0002-local-embeddings-one-sqlite-index.md).
 - **`brain` skill**, which owns every brain behaviour:
   - first-run setup: the download with its size and checksum, then the first index. There's no location question: the project is always a source, and outside sources are listed per project ([ADR 0004](../adr/0004-brain-sources-per-project.md));
   - agentic hybrid search: the agent picks terms and/or a plain-language description, filters, and refines, in a subagent on the small model, answering with citations and dates;
@@ -241,11 +241,11 @@ Shipped 2026-11-21 ([#65](https://github.com/po2studio/supercharge/pull/65)). It
 
 ### Slice 1b: The brain works on the project with no setup; outside sources opt in
 **Delivers** the source model of [ADR 0004](../adr/0004-brain-sources-per-project.md), reworking slice 1's setup:
-- **Binary:** indexes several sources: the project's docs in place (its `docs` folder, `README.md`, `AGENTS.md`; read-only, keyed by project and path relative to the repo root) and each outside source, one index per source under `~/.cache/supercharge/index/<source-hash>/`; `search` runs over the project's index and its sources', fuses them by rank, and each hit names its source. The ADR status handling stays in slice 3.
+- **Binary:** run inside a project, resolves its sources itself (the project's docs in place: its `docs` folder, `README.md`, `AGENTS.md`; read-only, keyed by project and path relative to the repo root; plus the `brain:` list of AGENTS.md; `--repo` and `--source` override) and indexes each, one index per source under `~/.cache/supercharge/index/<source-hash>/`; `search` runs over the project's index and its sources', fuses them by rank, and each hit names its source. `init` creates the layout in the `update: true` source. The ADR status handling stays in slice 3.
 - **The `brain` skill:**
   - reads sources from the `brain:` list in the project's AGENTS.md; no location question, no `~/.config/supercharge/brain`;
   - first run asks only for the download: size and cache path, then `go`;
-  - creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` only in the `update: true` source, if missing; two `update: true` sources stop with a message naming both;
+  - runs `brain init` on every answer, which creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` only in the `update: true` source, if missing (the binary owns the layout; `index`, `search` and `stats` never write into a source); two `update: true` sources stop every command with a message naming both;
   - never writes `brain:`; when asked to add a source, it says the line to add.
 - **Docs:** README (Brain and Config), `docs/PRODUCT.md` and `docs/ARCHITECTURE.md` describe the source model; nothing still mentions `~/.config/supercharge/brain`.
 

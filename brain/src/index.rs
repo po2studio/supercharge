@@ -1,4 +1,4 @@
-//! Walks the brain, and embeds what changed since the last run. Reads files; never writes to them.
+//! Walks a source, and embeds what changed since the last run. Reads files; never writes to them.
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -15,6 +15,7 @@ use crate::{
     chunk::{self, Params},
     doc,
     embed::Embedder,
+    sources::{Kind, Source, PROJECT_FILES},
     store::{self, NewChunk, NewFile, Store},
 };
 
@@ -48,6 +49,24 @@ pub struct Report {
     pub seconds: f64,
 }
 
+impl Report {
+    /// Adds another source's run to this total; `skipped` entries say which source they are from.
+    pub fn add(&mut self, label: &str, other: &Report) {
+        self.files += other.files;
+        self.chunks += other.chunks;
+        self.files_changed += other.files_changed;
+        self.files_removed += other.files_removed;
+        self.embedded_chunks += other.embedded_chunks;
+        self.dates_refreshed += other.dates_refreshed;
+        self.seconds += other.seconds;
+        for (ext, n) in &other.not_indexed {
+            *self.not_indexed.entry(ext.clone()).or_insert(0) += n;
+        }
+        self.skipped
+            .extend(other.skipped.iter().map(|s| format!("{label}: {s}")));
+    }
+}
+
 /// A text file in the brain: the key it is stored under, and where it is.
 #[derive(Debug, PartialEq)]
 pub struct Found {
@@ -75,11 +94,57 @@ fn is_text(path: &Path) -> bool {
     )
 }
 
-/// Finds the text files, and counts the others by extension. Hidden names are skipped, and so are
-/// symlinks to folders and broken ones; a symlink to a file is read as that file.
-pub fn walk(root: &Path) -> Result<Walk> {
+/// Finds the text files of a source, and counts the others by extension: all of an outside
+/// source, or a project's docs folder, `README.md` and `AGENTS.md`. Hidden names are skipped, and
+/// so are symlinks to folders and broken ones; a symlink to a file is read as that file.
+pub fn walk(source: &Source) -> Result<Walk> {
+    let root = source.root.as_path();
     let mut out = Walk::default();
-    let mut stack = vec![root.to_path_buf()];
+    match &source.kind {
+        Kind::Outside => walk_from(root, root, &mut out)?,
+        Kind::Project { docs } => {
+            let start = root.join(docs);
+            if start.is_dir() {
+                walk_from(root, &start, &mut out)?;
+            }
+            for name in PROJECT_FILES {
+                let path = root.join(name);
+                let Ok(meta) = fs::metadata(&path) else {
+                    continue;
+                };
+                if !meta.is_file() || out.files.iter().any(|f| f.rel == name) {
+                    continue;
+                }
+                if meta.len() > MAX_FILE_BYTES {
+                    let note = format!("{name} (over {} MiB)", MAX_FILE_BYTES >> 20);
+                    if !out.skipped.contains(&note) {
+                        out.skipped.push(note);
+                    }
+                } else {
+                    out.files.push(Found {
+                        rel: name.to_string(),
+                        path,
+                    });
+                }
+            }
+        }
+    }
+    out.files.sort_by(|a, b| a.rel.cmp(&b.rel));
+    out.skipped.sort();
+    // Two names that differ only in bytes that aren't UTF-8 would share a key.
+    let before = out.files.len();
+    out.files.dedup_by(|b, a| a.rel == b.rel);
+    if out.files.len() < before {
+        out.skipped.push(format!(
+            "{} file(s) with a name that clashes with another once its non-UTF-8 bytes are replaced",
+            before - out.files.len()
+        ));
+    }
+    Ok(out)
+}
+
+fn walk_from(root: &Path, start: &Path, out: &mut Walk) -> Result<()> {
+    let mut stack = vec![start.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
             let entry = entry?;
@@ -124,33 +189,35 @@ pub fn walk(root: &Path) -> Result<Walk> {
             }
         }
     }
-    out.files.sort_by(|a, b| a.rel.cmp(&b.rel));
-    out.skipped.sort();
-    // Two names that differ only in bytes that aren't UTF-8 would share a key.
-    let before = out.files.len();
-    out.files.dedup_by(|b, a| a.rel == b.rel);
-    if out.files.len() < before {
-        out.skipped.push(format!(
-            "{} file(s) with a name that clashes with another once its non-UTF-8 bytes are replaced",
-            before - out.files.len()
-        ));
-    }
-    Ok(out)
+    Ok(())
 }
 
-/// Last commit date of each file, when the brain is in a git repo. Read-only.
-fn git_dates(root: &Path) -> HashMap<String, String> {
+/// Last commit date of each file, when the source is in a git repo. Read-only. A project looks
+/// only at the history of the paths it reads, not at the whole repo's.
+fn git_dates(source: &Source) -> HashMap<String, String> {
     let mut dates = HashMap::new();
+    let mut args: Vec<String> = [
+        "-c",
+        "core.quotepath=off",
+        "log",
+        "--relative",
+        "--format=%x00%cs",
+        "--name-only",
+    ]
+    .map(String::from)
+    .into();
+    if let Kind::Project { docs } = &source.kind {
+        args.push("--".into());
+        args.push(if docs.is_empty() {
+            ".".into()
+        } else {
+            docs.clone()
+        });
+        args.extend(PROJECT_FILES.map(String::from));
+    }
     let Ok(out) = Command::new("git")
-        .args([
-            "-c",
-            "core.quotepath=off",
-            "log",
-            "--relative",
-            "--format=%x00%cs",
-            "--name-only",
-        ])
-        .current_dir(root)
+        .args(&args)
+        .current_dir(&source.root)
         .output()
     else {
         return dates;
@@ -187,7 +254,7 @@ fn embedded_text(header: &str, text: &str, count: &dyn Fn(&str) -> usize) -> Str
 }
 
 pub fn index(
-    root: &Path,
+    source: &Source,
     store: &mut Store,
     embedder: &mut dyn Embedder,
     progress: bool,
@@ -197,7 +264,7 @@ pub fn index(
         files,
         other: not_indexed,
         mut skipped,
-    } = walk(root)?;
+    } = walk(source)?;
     let known = store.files()?;
     let on_disk: BTreeSet<&str> = files.iter().map(|f| f.rel.as_str()).collect();
     let mut report = Report {
@@ -211,7 +278,7 @@ pub fn index(
         report.files_removed += 1;
     }
 
-    let git = git_dates(root);
+    let git = git_dates(source);
     let params = Params::default();
     let mut pending: Vec<Pending> = Vec::new();
     let mut queued = 0;
@@ -281,7 +348,12 @@ pub fn index(
                 hash,
                 title,
                 date,
-                kind: doc::kind_of(rel).to_string(),
+                kind: if source.is_project() {
+                    "raw"
+                } else {
+                    doc::kind_of(rel)
+                }
+                .to_string(),
                 chunks: new_chunks,
             },
             texts,
@@ -351,7 +423,13 @@ mod tests {
 
     fn run(brain: &TempDir, cache: &TempDir) -> Report {
         let mut store = Store::create(&cache.path().join("index.sqlite"), brain.path()).unwrap();
-        index(brain.path(), &mut store, &mut Fake, false).unwrap()
+        index(
+            &Source::outside("t", brain.path()),
+            &mut store,
+            &mut Fake,
+            false,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -366,11 +444,116 @@ mod tests {
             ("scan2.PDF", "x"),
             ("Makefile", "x"),
         ]);
-        let Walk { files, other, .. } = walk(brain.path()).unwrap();
+        let Walk { files, other, .. } = walk(&Source::outside("t", brain.path())).unwrap();
         let files: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
         assert_eq!(files, ["a.md", "sub/b.TXT", "sub/deep/c.markdown"]);
         assert_eq!(other["pdf"], 2);
         assert_eq!(other["(none)"], 1);
+    }
+
+    fn project(brain: &TempDir, docs: &str) -> Source {
+        Source {
+            label: crate::sources::PROJECT.into(),
+            kind: Kind::Project { docs: docs.into() },
+            root: brain.path().to_path_buf(),
+            exists: true,
+            update: false,
+        }
+    }
+
+    #[test]
+    fn a_project_reads_its_docs_folder_readme_and_agents_md_and_nothing_else() {
+        let (dir, cache) = setup(&[
+            ("README.md", "# Readme"),
+            ("AGENTS.md", "# Agents"),
+            ("CHANGELOG.md", "# Not read"),
+            ("docs/PRODUCT.md", "# Product"),
+            ("docs/adr/0001-x.md", "# ADR"),
+            ("docs/diagram.png", "x"),
+            ("src/notes.md", "# Not read"),
+            ("handbook/guide.md", "# Not read by default"),
+        ]);
+        let rels = |source: &Source| -> Vec<String> {
+            walk(source)
+                .unwrap()
+                .files
+                .into_iter()
+                .map(|f| f.rel)
+                .collect()
+        };
+        assert_eq!(
+            rels(&project(&dir, "docs")),
+            [
+                "AGENTS.md",
+                "README.md",
+                "docs/PRODUCT.md",
+                "docs/adr/0001-x.md"
+            ]
+        );
+        assert_eq!(
+            rels(&project(&dir, "handbook")),
+            ["AGENTS.md", "README.md", "handbook/guide.md"]
+        );
+        assert_eq!(walk(&project(&dir, "docs")).unwrap().other["png"], 1);
+        // The root as the docs folder reads each file once.
+        assert_eq!(
+            rels(&project(&dir, ""))
+                .iter()
+                .filter(|r| *r == "README.md")
+                .count(),
+            1
+        );
+        // Run against a project: files are keyed by their path in it, and the brain's own folders
+        // mean nothing there.
+        let source = project(&dir, "docs");
+        let mut store = Store::create(&cache.path().join("index.sqlite"), dir.path()).unwrap();
+        let r = index(&source, &mut store, &mut Fake, false).unwrap();
+        assert_eq!((r.files, r.files_changed), (4, 4));
+        assert!(store.files().unwrap().contains_key("docs/adr/0001-x.md"));
+        let kind: String = store
+            .conn
+            .query_row("SELECT DISTINCT kind FROM files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kind, "raw");
+    }
+
+    #[test]
+    fn a_project_without_docs_or_readme_has_nothing_to_read() {
+        let (dir, _) = setup(&[("src/main.md", "x")]);
+        assert!(walk(&project(&dir, "docs")).unwrap().files.is_empty());
+    }
+
+    #[test]
+    fn an_oversized_readme_or_agents_md_is_reported_not_read() {
+        let (dir, _) = setup(&[("AGENTS.md", "# Agents"), ("docs/a.md", "# A")]);
+        let big = fs::File::create(dir.path().join("README.md")).unwrap();
+        big.set_len(MAX_FILE_BYTES + 1).unwrap();
+        for docs in ["docs", ""] {
+            let w = walk(&project(&dir, docs)).unwrap();
+            let rels: Vec<&str> = w.files.iter().map(|f| f.rel.as_str()).collect();
+            assert!(!rels.contains(&"README.md"), "docs {docs:?}: {rels:?}");
+            assert_eq!(
+                w.skipped
+                    .iter()
+                    .filter(|s| s.starts_with("README.md"))
+                    .count(),
+                1,
+                "docs {docs:?}: {:?}",
+                w.skipped
+            );
+        }
+    }
+
+    #[test]
+    fn a_projects_dates_come_from_the_history_of_the_paths_it_reads() {
+        let (dir, cache) = setup(&[("README.md", "# R"), ("src/other.md", "x")]);
+        git(dir.path(), &[], &["init", "-q"]);
+        git(dir.path(), &[], &["add", "."]);
+        let old = [("GIT_COMMITTER_DATE", "2021-03-04T12:00:00Z")];
+        git(dir.path(), &old, &["commit", "-q", "-m", "one"]);
+        let mut store = Store::create(&cache.path().join("index.sqlite"), dir.path()).unwrap();
+        index(&project(&dir, "docs"), &mut store, &mut Fake, false).unwrap();
+        assert_eq!(store.files().unwrap()["README.md"].1, "2021-03-04");
     }
 
     #[test]
@@ -477,7 +660,13 @@ mod tests {
         let (brain, cache) = setup(&[("deep/ly/nested/folder/file.md", &doc)]);
         let mut store = Store::create(&cache.path().join("index.sqlite"), brain.path()).unwrap();
         let mut spy = Spy(Vec::new());
-        index(brain.path(), &mut store, &mut spy, false).unwrap();
+        index(
+            &Source::outside("t", brain.path()),
+            &mut store,
+            &mut spy,
+            false,
+        )
+        .unwrap();
         assert!(spy.0.len() >= 3);
         for t in &spy.0 {
             assert!(
@@ -578,7 +767,7 @@ mod tests {
         std::os::unix::fs::symlink(root, root.join("real/up")).unwrap();
         std::os::unix::fs::symlink(root.join("gone.md"), root.join("broken.md")).unwrap();
         let r = run(&brain, &cache);
-        let rels: Vec<String> = walk(root)
+        let rels: Vec<String> = walk(&Source::outside("t", root))
             .unwrap()
             .files
             .into_iter()

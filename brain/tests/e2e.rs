@@ -9,9 +9,11 @@ use std::{
 };
 use tempfile::TempDir;
 
+/// A machine with one folder of documents, read as a source from a directory that is no project.
 struct Env {
     brain: TempDir,
     cache: TempDir,
+    cwd: TempDir,
 }
 
 impl Env {
@@ -19,6 +21,7 @@ impl Env {
         let env = Env {
             brain: TempDir::new().unwrap(),
             cache: TempDir::new().unwrap(),
+            cwd: TempDir::new().unwrap(),
         };
         for (path, text) in files {
             env.write(path, text);
@@ -35,6 +38,7 @@ impl Env {
     fn cmd(&self, args: &[&str]) -> Output {
         run(
             env!("CARGO_BIN_EXE_brain"),
+            self.cwd.path(),
             self.brain.path(),
             self.cache.path(),
             args,
@@ -66,12 +70,13 @@ impl Env {
     }
 }
 
-fn run(bin: &str, root: &Path, cache: &Path, args: &[&str]) -> Output {
+fn run(bin: &str, cwd: &Path, source: &Path, cache: &Path, args: &[&str]) -> Output {
     Command::new(bin)
+        .current_dir(cwd)
         .env_clear()
         .env("SUPERCHARGE_CACHE_DIR", cache)
-        .arg("--root")
-        .arg(root)
+        .arg("--source")
+        .arg(source)
         .args(args)
         .output()
         .unwrap()
@@ -184,7 +189,7 @@ fn index_search_change_and_index_again() {
         (Some(1), Some(1))
     );
     assert_eq!(
-        env.json(&["stats", "--json"])["last_index"]["embedded_chunks"],
+        env.json(&["stats", "--json"])["sources"][0]["last_index"]["embedded_chunks"],
         1
     );
     assert_eq!(
@@ -228,7 +233,7 @@ fn files_it_cannot_read_yet_are_counted_not_failed() {
     let index = env.json(&["index", "--json"]);
     assert_eq!(index["files"], 5);
     let stats = env.json(&["stats", "--json"]);
-    assert_eq!(stats["not_indexed"]["pdf"], 1);
+    assert_eq!(stats["sources"][0]["not_indexed"]["pdf"], 1);
 }
 
 #[test]
@@ -240,7 +245,13 @@ fn a_text_file_over_the_size_cap_is_listed_as_left_out() {
         .unwrap();
     let index = env.json(&["index", "--json"]);
     assert_eq!(index["files"], 5);
-    assert_eq!(index["skipped"][0], "dump.txt (over 1 MiB)");
+    assert!(
+        index["skipped"][0]
+            .as_str()
+            .unwrap()
+            .ends_with(": dump.txt (over 1 MiB)"),
+        "{index}"
+    );
     let out = env.cmd(&["stats"]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -264,9 +275,10 @@ fn one_huge_unbroken_line_is_indexed_in_bounded_time() {
         .collect();
     env.write("dump/blob.txt", &blob);
     let mut child = Command::new(env!("CARGO_BIN_EXE_brain"))
+        .current_dir(env.cwd.path())
         .env_clear()
         .env("SUPERCHARGE_CACHE_DIR", env.cache.path())
-        .arg("--root")
+        .arg("--source")
         .arg(env.brain.path())
         .args(["index", "--json"])
         .stdout(std::process::Stdio::piped())
@@ -309,6 +321,18 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
         fs::create_dir_all(dest.parent().unwrap()).unwrap();
         fs::copy(env.brain.path().join(path), dest).unwrap();
     }
+    let project = TempDir::new().unwrap();
+    fs::create_dir_all(project.path().join("docs")).unwrap();
+    fs::write(
+        project.path().join("docs/deploy.md"),
+        "# Deploy\n\nRoll back a bad release with make rollback and the token ROLLBACK-77.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("README.md"),
+        "# The project\n\nA service.\n",
+    )
+    .unwrap();
     fs::write(
         questions.path().join("q.yaml"),
         r#"
@@ -328,6 +352,10 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
   question: How many vacation days do employees get?
   terms: vacation OR employees
   expect: [policies/holidays.md]
+- id: rollback
+  question: What do I type to undo a bad release?
+  terms: ROLLBACK-77
+  expect: ["project:docs/deploy.md"]
 "#,
     )
     .unwrap();
@@ -337,6 +365,8 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
             "eval",
             "--corpus",
             corpus.path().to_str().unwrap(),
+            "--project",
+            project.path().to_str().unwrap(),
             "--questions",
             questions.path().to_str().unwrap(),
             "--baseline",
@@ -352,6 +382,7 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
         String::from_utf8_lossy(&out.stderr)
     );
     let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(text.contains("2 sources"), "{text}");
     for needle in ["recall@5", "MRR", "p50", "chunks/s", "hybrid", "terms"] {
         assert!(text.contains(needle), "eval output lacks {needle}:\n{text}");
     }
@@ -371,4 +402,95 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
         "a regression against the baseline must fail"
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("regress"));
+}
+
+/// The flow as a person runs it: inside a project, no flags. The project's docs are read in place,
+/// a source its AGENTS.md lists is read beside them, and `init` creates the layout only where
+/// `update: true` says.
+#[test]
+fn inside_a_project_with_no_flags_the_docs_and_the_listed_sources_are_searched() {
+    let dir = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+    let at = |p: &str| dir.path().join(p);
+    let write = |p: &str, t: &str| {
+        let full = at(p);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(full, t).unwrap();
+    };
+    write(
+        "repo/AGENTS.md",
+        "# AGENTS.md\n\n## Supercharge\n\n```yaml\ndocs: docs\nbrain:\n  - path: ../policies\n  - path: ../brain\n    update: true\n```\n",
+    );
+    write(
+        "repo/README.md",
+        "# Selkie\n\nSelkie chases late invoices.\n",
+    );
+    write(
+        "repo/docs/PRODUCT.md",
+        "# Product\n\nA paused invoice stays paused until someone resumes it.\n",
+    );
+    write("policies/animals.md", "# Animals\n\nAnimals are not permitted on the premises except certified assistance canines.\n");
+    write(
+        "brain/old-decision.md",
+        "# Old\n\nThe office plant rota is on Fridays.\n",
+    );
+    let repo = at("repo");
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_brain"))
+            .current_dir(&repo)
+            .env_clear()
+            .env("SUPERCHARGE_CACHE_DIR", cache.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let sources_before = (
+        snapshot(&at("policies")),
+        snapshot(&at("brain")),
+        snapshot(&repo),
+    );
+    run(&["index"]);
+    let hit = |args: &[&str]| -> Vec<(String, String)> {
+        let mut full = vec!["search", "--json"];
+        full.extend_from_slice(args);
+        serde_json::from_str::<Value>(&run(&full))
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| {
+                (
+                    h["source"].as_str().unwrap().into(),
+                    h["path"].as_str().unwrap().into(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        hit(&["--about", "when does a paused invoice resume"])[0].1,
+        "docs/PRODUCT.md"
+    );
+    assert!(hit(&["--about", "can I bring my dog to work"])
+        .contains(&("../policies".to_string(), "animals.md".to_string())));
+    assert!(hit(&["--terms", "plant"])
+        .contains(&("../brain".to_string(), "old-decision.md".to_string())));
+    assert_eq!(
+        sources_before,
+        (
+            snapshot(&at("policies")),
+            snapshot(&at("brain")),
+            snapshot(&repo)
+        ),
+        "reading writes nothing"
+    );
+    assert!(run(&["stats"]).contains("agents write here"));
+    run(&["init"]);
+    assert!(at("brain/BRAIN.md").is_file() && at("brain/decisions").is_dir());
+    assert!(!at("policies/BRAIN.md").exists() && !at("repo/decisions").exists());
 }
