@@ -104,7 +104,9 @@ jobs:
           chmod +x brain
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Build the index of this repo's files
-        run: brain pack --budget 330 --out "$RUNNER_TEMP/index" --json > "$RUNNER_TEMP/pack.json"
+        run: |
+          brain pack --budget 330 --out "$RUNNER_TEMP/index" --json > "$RUNNER_TEMP/pack.json"
+          jq -c '{assets, bytes, started_from: .pulled.commit, files: .report.files, chunks: .report.chunks, embedded: .report.embedded_chunks, seconds: .report.seconds, incomplete: .report.incomplete}' "$RUNNER_TEMP/pack.json"
       - name: Publish it
         run: |
           gh release view brain-index > /dev/null 2>&1 || gh release create brain-index --prerelease --target "$GITHUB_SHA" \
