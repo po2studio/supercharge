@@ -345,8 +345,8 @@ fn table_groups(text: &str, count: &dyn Fn(&str) -> usize, p: &Params) -> Option
 }
 
 /// `Name:` at the start of a line of a transcript, with an optional timestamp before it and bold
-/// markers around it: the label with its colon, as written.
-fn speaker(line: &str) -> Option<&str> {
+/// markers around it: the label with its colon, as written, and the speaker's name alone.
+fn speaker_split(line: &str) -> Option<(&str, &str)> {
     let line = line.trim_start();
     let mut rest = line;
     if let Some(r) = rest.strip_prefix(['[', '(']) {
@@ -377,7 +377,11 @@ fn speaker(line: &str) -> Option<&str> {
             .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '\'' | '’' | '-' | '_'));
     let after = body[colon + 1..].trim_start_matches('*');
     let spaced = after.is_empty() || after.starts_with(char::is_whitespace);
-    (plausible && spaced).then(|| &line[..line.len() - body.len() + colon + 1])
+    (plausible && spaced).then(|| (&line[..line.len() - body.len() + colon + 1], label))
+}
+
+fn speaker(line: &str) -> Option<&str> {
+    speaker_split(line).map(|(prefix, _)| prefix)
 }
 
 /// Whether the text is a transcript: many lines that start with a speaker's name, at least one
@@ -388,9 +392,8 @@ fn is_transcript(text: &str) -> bool {
     let mut speakers: Vec<&str> = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         lines += 1;
-        if let Some(s) = speaker(line) {
+        if let Some((_, name)) = speaker_split(line) {
             turns += 1;
-            let name = s.trim_end_matches(':').trim_matches('*').trim();
             if !speakers.contains(&name) {
                 speakers.push(name);
             }
@@ -416,12 +419,14 @@ fn turns(text: &str) -> Vec<String> {
 
 /// A turn too long for a chunk: cut at sentences, each piece starting with the speaker's name.
 fn split_turn(turn: &str, count: &dyn Fn(&str) -> usize, p: &Params) -> Vec<String> {
-    let Some(label) = speaker(turn) else {
+    let Some((prefix, name)) = speaker_split(turn) else {
         return split_at(turn, Level::Paragraph, count, p);
     };
-    let rest = &turn[label.len()..];
+    // The pieces name the speaker, without the timestamp of the turn's start.
+    let label = format!("{name}:");
+    let rest = &turn.trim_start()[prefix.len()..];
     let q = Params {
-        target: p.target.saturating_sub(count(label)).max(p.target / 2),
+        target: p.target.saturating_sub(count(&label)).max(p.target / 2),
         ..*p
     };
     split_at(rest.trim(), Level::Sentence, count, &q)
@@ -878,6 +883,12 @@ mod tests {
                 .all(|c| c.text.trim_start().starts_with("Bjorn:") || c.text.contains("\nBjorn:")),
             "{pieces:?}"
         );
+    }
+
+    #[test]
+    fn a_transcript_with_a_timestamp_on_every_turn_is_still_a_transcript() {
+        let talk = "[00:00:01] Anna: Welcome everyone.\n[00:00:09] Bjorn: Thanks, the launch moves to May.\n[00:00:20] Anna: Why May?\n[00:00:31] Bjorn: The contract is not signed.\n[00:00:40] Anna: Fine.\n";
+        assert!(is_transcript(talk));
     }
 
     #[test]

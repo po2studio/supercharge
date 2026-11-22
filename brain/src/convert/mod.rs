@@ -20,7 +20,9 @@ use std::{
     collections::HashSet,
     fs,
     panic::{catch_unwind, AssertUnwindSafe},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+    time::{Duration, Instant},
 };
 
 /// Bumped when a converter's output changes, so cached conversions are made again.
@@ -203,6 +205,67 @@ impl Format {
     pub fn cached(self) -> bool {
         self.max_bytes() == MAX_CONTAINER_BYTES
     }
+
+    /// What the cache key and the converter process call it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Format::Markdown => "markdown",
+            Format::Text => "text",
+            Format::Code => "code",
+            Format::Json => "json",
+            Format::Csv => "csv",
+            Format::Tsv => "tsv",
+            Format::Html => "html",
+            Format::Rtf => "rtf",
+            Format::Pdf => "pdf",
+            Format::Docx => "docx",
+            Format::Pptx => "pptx",
+            Format::Spreadsheet => "spreadsheet",
+            Format::Odf => "odf",
+            Format::Email => "email",
+            Format::Mbox => "mbox",
+            Format::Unconvertible(_) => "unconvertible",
+            Format::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Format> {
+        [
+            Format::Markdown,
+            Format::Text,
+            Format::Code,
+            Format::Json,
+            Format::Csv,
+            Format::Tsv,
+            Format::Html,
+            Format::Rtf,
+            Format::Pdf,
+            Format::Docx,
+            Format::Pptx,
+            Format::Spreadsheet,
+            Format::Odf,
+            Format::Email,
+            Format::Mbox,
+            Format::Unknown,
+        ]
+        .into_iter()
+        .find(|f| f.name() == name)
+    }
+
+    /// Whether its converter parses a structured file, which a damaged or hostile one can send
+    /// into endless work or past any memory limit: such a file is converted in a process of its
+    /// own, which is stopped when it takes too long and cannot take more memory than a limit.
+    fn parses(self) -> bool {
+        !matches!(
+            self,
+            Format::Markdown
+                | Format::Text
+                | Format::Code
+                | Format::Json
+                | Format::Unknown
+                | Format::Unconvertible(_)
+        )
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -265,13 +328,111 @@ fn run(format: Format, bytes: &[u8]) -> Result<Converted, String> {
     })
 }
 
+/// The program that converts files that need isolating: `brain` itself, called as
+/// `brain convert-child <format>`. Unset (as in unit tests) files are converted in this process.
+static ISOLATE_WITH: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn isolate_with(exe: PathBuf) {
+    let _ = ISOLATE_WITH.set(exe);
+}
+
+/// A converter process that runs longer than this is stopped.
+const TIME_LIMIT: Duration = Duration::from_secs(120);
+/// The address space a converter process may take, so that a file that asks for a table of
+/// billions of cells fails alone.
+pub const CHILD_MEMORY: u64 = 3 << 30;
+
+/// Runs a converter in this process, a panic being a corrupt file.
+fn run_caught(format: Format, bytes: &[u8]) -> Result<Converted, String> {
+    catch_unwind(AssertUnwindSafe(|| run(format, bytes)))
+        .unwrap_or_else(|_| Err("cannot be read (the converter failed)".into()))
+}
+
+/// What `brain convert-child` does: converts the bytes on stdin, writes the result as JSON.
+pub fn child(format: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::io::{Read, Write};
+    let format = Format::from_name(format).context("not a format")?;
+    let mut bytes = Vec::new();
+    std::io::stdin().read_to_end(&mut bytes)?;
+    let result = run_caught(format, &bytes);
+    std::io::stdout().write_all(&serde_json::to_vec(&result)?)?;
+    Ok(())
+}
+
+fn run_isolated(exe: &Path, format: Format, bytes: &[u8]) -> Result<Converted, String> {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    let crashed = || "cannot be read (the converter crashed or ran out of memory)".to_string();
+    let mut command = Command::new(exe);
+    command
+        .args(["convert-child", format.name()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Safety: `setrlimit` is async-signal-safe, and nothing else runs between fork and exec.
+        unsafe {
+            command.pre_exec(|| {
+                let limit = libc::rlimit {
+                    rlim_cur: CHILD_MEMORY as libc::rlim_t,
+                    rlim_max: CHILD_MEMORY as libc::rlim_t,
+                };
+                libc::setrlimit(libc::RLIMIT_AS, &limit);
+                Ok(())
+            });
+        }
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("cannot be read (no converter process: {e})"))?;
+    let mut stdin = child.stdin.take().ok_or_else(crashed)?;
+    let mut stdout = child.stdout.take().ok_or_else(crashed)?;
+    // Both ends are served at once: a large file must not block on a full pipe.
+    let input = bytes.to_vec();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        out
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed() > TIME_LIMIT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = writer.join();
+                let _ = reader.join();
+                return Err(format!("took over {} s to read", TIME_LIMIT.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Err(_) => break None,
+        }
+    };
+    let _ = writer.join();
+    let out = reader.join().unwrap_or_default();
+    if !status.is_some_and(|s| s.success()) {
+        return Err(crashed());
+    }
+    serde_json::from_slice::<Result<Converted, String>>(&out).unwrap_or_else(|_| Err(crashed()))
+}
+
 /// The text of a file, or why it has none. Never fails and never panics: a converter that does
 /// is a corrupt file.
 pub fn convert(format: Format, bytes: &[u8]) -> Outcome {
-    let converted = match catch_unwind(AssertUnwindSafe(|| run(format, bytes))) {
-        Ok(Ok(c)) => c,
-        Ok(Err(reason)) => return Outcome::Unconverted(reason),
-        Err(_) => return Outcome::Unconverted("cannot be read (the converter failed)".into()),
+    let result = match ISOLATE_WITH.get() {
+        Some(exe) if format.parses() => run_isolated(exe, format, bytes),
+        _ => run_caught(format, bytes),
+    };
+    let converted = match result {
+        Ok(c) => c,
+        Err(reason) => return Outcome::Unconverted(reason),
     };
     // A format whose whole point is its text has nothing to index without any.
     let must_have_text = !matches!(
@@ -288,7 +449,11 @@ pub fn convert(format: Format, bytes: &[u8]) -> Outcome {
             .into(),
         );
     }
-    if format.cached() && converted.text.len() as u64 > MAX_TEXT_BYTES {
+    let own_text = matches!(
+        format,
+        Format::Markdown | Format::Text | Format::Code | Format::Unknown
+    );
+    if !own_text && converted.text.len() as u64 > MAX_TEXT_BYTES {
         return Outcome::Unconverted(format!(
             "converted text over {} MiB (left out)",
             MAX_TEXT_BYTES >> 20
@@ -304,18 +469,18 @@ struct Cached {
     converted: Converted,
 }
 
-fn cache_file(dir: &Path, hash: &str) -> std::path::PathBuf {
-    dir.join(format!("{hash}.json"))
+fn cache_file(dir: &Path, key: &str) -> std::path::PathBuf {
+    dir.join(format!("{key}.json"))
 }
 
-/// A cached conversion of the file with this content hash, if one was made by this version.
-pub fn cache_get(dir: &Path, hash: &str) -> Option<Converted> {
-    let cached: Cached = serde_json::from_slice(&fs::read(cache_file(dir, hash)).ok()?).ok()?;
+/// A cached conversion of the file under this key (the content hash and the format), if one was made by this version.
+pub fn cache_get(dir: &Path, key: &str) -> Option<Converted> {
+    let cached: Cached = serde_json::from_slice(&fs::read(cache_file(dir, key)).ok()?).ok()?;
     (cached.version == VERSION).then_some(cached.converted)
 }
 
 /// Keeps a conversion for next time. A cache that cannot be written is only a slower next run.
-pub fn cache_put(dir: &Path, hash: &str, converted: &Converted) {
+pub fn cache_put(dir: &Path, key: &str, converted: &Converted) {
     let cached = Cached {
         version: VERSION,
         converted: converted.clone(),
@@ -324,9 +489,9 @@ pub fn cache_put(dir: &Path, hash: &str, converted: &Converted) {
         return;
     }
     if let Ok(bytes) = serde_json::to_vec(&cached) {
-        let tmp = dir.join(format!("{hash}.tmp"));
+        let tmp = dir.join(format!("{key}.tmp"));
         if fs::write(&tmp, bytes).is_ok() {
-            let _ = fs::rename(&tmp, cache_file(dir, hash));
+            let _ = fs::rename(&tmp, cache_file(dir, key));
         }
     }
 }
@@ -339,7 +504,7 @@ pub fn cache_prune(dir: &Path, keep: &HashSet<String>) {
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let stale = match name.strip_suffix(".json") {
-            Some(hash) => !keep.contains(hash),
+            Some(key) => !keep.contains(key),
             None => true,
         };
         if stale {
@@ -418,6 +583,19 @@ mod tests {
             convert(Format::Pdf, b"%PDF-1.7 \x00\xff"),
             Outcome::Unconverted(_)
         ));
+    }
+
+    #[test]
+    fn a_table_that_renders_far_larger_than_its_file_is_left_out_not_held() {
+        // 400 rows as wide as 20,000 columns: a few KB of commas, hundreds of MB as a table.
+        let mut csv = "a,".repeat(10_000);
+        csv.push('\n');
+        csv.push_str(&"1\n".repeat(400));
+        assert!(csv.len() < 100_000);
+        match convert(Format::Csv, csv.as_bytes()) {
+            Outcome::Unconverted(why) => assert!(why.contains("over 1 MiB"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

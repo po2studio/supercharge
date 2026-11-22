@@ -53,6 +53,13 @@ impl<'a> Iterator for Tokens<'a> {
                 self.rest = tail;
                 return Some(Tok::Text(text));
             };
+            // A `<` that no tag starts with (`a < b`) is text.
+            if !rest.starts_with(|c: char| c.is_alphabetic() || matches!(c, '/' | '!' | '?')) {
+                let end = 1 + self.rest[1..].find('<').unwrap_or(self.rest.len() - 1);
+                let (text, tail) = self.rest.split_at(end);
+                self.rest = tail;
+                return Some(Tok::Text(text));
+            }
             if let Some(after) = rest.strip_prefix("!--") {
                 self.rest = after.find("-->").map_or("", |i| &after[i + 3..]);
                 continue;
@@ -143,6 +150,25 @@ mod tests {
         assert_eq!(attr(" xy=\"1\" y=\"2\"", "y").as_deref(), Some("2"));
         assert_eq!(attr(" a=\"&lt;\"", "a").as_deref(), Some("<"));
         assert_eq!(attr(" a=\"1\"", "b"), None);
+    }
+
+    #[test]
+    fn a_less_than_sign_that_starts_no_tag_is_text() {
+        let toks: Vec<Tok> = tokens("<p>a < b and 2<3</p>").collect();
+        assert_eq!(
+            toks,
+            vec![
+                Tok::Open {
+                    name: "p",
+                    attrs: "",
+                    empty: false
+                },
+                Tok::Text("a "),
+                Tok::Text("< b and 2"),
+                Tok::Text("<3"),
+                Tok::Close("p"),
+            ]
+        );
     }
 
     #[test]

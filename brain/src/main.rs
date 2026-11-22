@@ -103,6 +103,10 @@ enum Command {
         #[arg(long)]
         details: bool,
     },
+    /// Converts the file on stdin of one format to JSON: how `index` keeps a damaged file's parser
+    /// from taking the indexer along. Limited in memory.
+    #[command(hide = true)]
+    ConvertChild { format: String },
     /// Writes the centre for the 1-bit codes (src/center.f32): the mean embedding of a corpus.
     #[command(hide = true)]
     Center { corpus: PathBuf, out: PathBuf },
@@ -154,7 +158,14 @@ struct Combined {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if let Command::ConvertChild { format } = &cli.command {
+        return convert::child(format);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        convert::isolate_with(exe);
+    }
     match &cli.command {
+        Command::ConvertChild { .. } => unreachable!("handled above"),
         Command::Index { json } => {
             let resolved = resolve(&cli)?;
             let mut embedder = embed::Onnx::load()?;

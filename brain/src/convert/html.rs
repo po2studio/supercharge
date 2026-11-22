@@ -121,7 +121,52 @@ pub fn convert(bytes: &[u8]) -> Converted {
     to_text(&source)
 }
 
+/// `html` without the content of its `<script>` and `<style>` elements, whose text (`a < b`) is
+/// not markup and must not be read as such.
+fn without_scripts(html: &str) -> std::borrow::Cow<'_, str> {
+    let lower = html.to_ascii_lowercase();
+    if !lower.contains("<script") && !lower.contains("<style") {
+        return html.into();
+    }
+    let mut out = String::with_capacity(html.len());
+    let mut at = 0;
+    while at < html.len() {
+        let next = ["<script", "<style"]
+            .iter()
+            .filter_map(|t| lower[at..].find(t).map(|i| (at + i, *t)))
+            .min();
+        let Some((start, tag)) = next else {
+            out.push_str(&html[at..]);
+            break;
+        };
+        out.push_str(&html[at..start]);
+        let close = format!("</{}", &tag[1..]);
+        at = match lower[start..].find(&close) {
+            Some(i) => {
+                let after = start + i;
+                lower[after..]
+                    .find('>')
+                    .map_or(html.len(), |j| after + j + 1)
+            }
+            None => html.len(),
+        };
+    }
+    out.into()
+}
+
 pub fn to_text(html: &str) -> Converted {
+    convert_html(html, false)
+}
+
+/// For an email: what a `<blockquote>` quotes is a reply's earlier message, and is left out.
+pub fn to_text_without_quotes(html: &str) -> Converted {
+    convert_html(html, true)
+}
+
+fn convert_html(html: &str, drop_quotes: bool) -> Converted {
+    let html = without_scripts(html);
+    let html = html.as_ref();
+    let mut quote_depth = 0usize;
     let mut out = Out {
         s: String::new(),
         pre: false,
@@ -140,6 +185,12 @@ pub fn to_text(html: &str) -> Converted {
             Tok::Open { name, attrs, empty } => {
                 let name = name.to_ascii_lowercase();
                 if hidden.is_some() {
+                    continue;
+                }
+                if drop_quotes && name == "blockquote" && !empty {
+                    quote_depth += 1;
+                }
+                if quote_depth > 0 {
                     continue;
                 }
                 if name == "title" {
@@ -218,6 +269,12 @@ pub fn to_text(html: &str) -> Converted {
                     }
                     continue;
                 }
+                if quote_depth > 0 {
+                    if name == "blockquote" {
+                        quote_depth -= 1;
+                    }
+                    continue;
+                }
                 if name == "title" {
                     in_title = false;
                     continue;
@@ -251,7 +308,7 @@ pub fn to_text(html: &str) -> Converted {
                 }
             }
             Tok::Text(t) => {
-                if hidden.is_some() {
+                if hidden.is_some() || quote_depth > 0 {
                     continue;
                 }
                 let t = unescape(t);
@@ -306,6 +363,15 @@ mod tests {
             "<table><tr><th>Name</th><th>Role</th></tr><tr><td>Anna</td><td><p>Chair</p><p>CFO</p></td></tr></table>",
         );
         assert_eq!(c.text, "| Name | Role |\n| Anna | Chair CFO |");
+    }
+
+    #[test]
+    fn a_comparison_in_a_script_does_not_swallow_the_page_and_a_quote_can_be_dropped() {
+        let c = to_text("<script>if (a < b) foo();</script><p>Answer</p><style>p > b {}</style>");
+        assert_eq!(c.text, "Answer");
+        let reply = "<p>Yes, agreed.</p><blockquote><p>Shall we?</p><blockquote>Earlier</blockquote></blockquote><p>Bye</p>";
+        assert_eq!(to_text_without_quotes(reply).text, "Yes, agreed.\n\nBye");
+        assert!(to_text(reply).text.contains("Shall we?"));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use super::{html, Converted};
 use crate::doc;
-use mail_parser::{mailbox::mbox::MessageIterator, AddressList, Message, MessageParser};
+use mail_parser::{mailbox::mbox::MessageIterator, AddressList, Message, MessageParser, PartKind};
 
 /// One message as `From:`, `To:`, `Cc:`, `Date:` and `Attachments:` lines, then its text.
 struct Rendered {
@@ -111,13 +111,16 @@ fn render(message: &Message) -> Rendered {
             text.push_str(&format!("{label}: {value}\n"));
         }
     }
-    let body = match message.body_text(0) {
-        Some(t) => t.into_owned(),
-        None => message
-            .body_html(0)
-            .map(|h| html::to_text(&h).text)
-            .unwrap_or_default(),
-    };
+    // The text body, each part as it is, an HTML one without the blockquotes of earlier messages.
+    let body = message
+        .text_body()
+        .filter_map(|part| match part.kind() {
+            PartKind::Html => part.text().map(|h| html::to_text_without_quotes(&h).text),
+            PartKind::Text => part.text().map(|t| t.into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
     text.push('\n');
     text.push_str(&strip_quoted(&body));
     Rendered {
@@ -227,5 +230,13 @@ mod tests {
     #[test]
     fn something_else_is_not_an_email() {
         assert!(eml(b"\x00\x01\x02 binary").is_err());
+    }
+
+    #[test]
+    fn a_reply_that_is_only_html_loses_its_quoted_blockquote() {
+        let raw = "From: a@x\r\nTo: b@x\r\nSubject: Re: Lunch\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<div>Noon works.</div><div>On Mon, B wrote:</div><blockquote><p>Shall we meet at one?</p></blockquote>";
+        let text = eml(raw.as_bytes()).unwrap().text;
+        assert!(text.contains("Noon works."), "{text}");
+        assert!(!text.contains("Shall we meet"), "{text}");
     }
 }

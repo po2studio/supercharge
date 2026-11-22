@@ -116,6 +116,10 @@ pub fn cell(text: &str) -> String {
     flat.replace('|', "\\|")
 }
 
+/// Output of a converter is cut here: far above what is indexed, so a file that would only be
+/// left out for its size never takes memory first.
+pub const MAX_OUT: usize = 4 << 20;
+
 /// A Markdown table: the first row is the header.
 pub fn table(rows: &[Vec<String>]) -> String {
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
@@ -136,6 +140,9 @@ pub fn table(rows: &[Vec<String>]) -> String {
     out.push('|');
     out.push_str(&"---|".repeat(width));
     for row in &rows[1..] {
+        if out.len() > MAX_OUT {
+            break;
+        }
         out.push('\n');
         out.push_str(&line(row));
     }

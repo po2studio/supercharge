@@ -252,6 +252,98 @@ fn files_with_no_text_are_listed_not_failed() {
     );
 }
 
+/// A workbook with a cell at A1 and one at XFD1048576 has 17 billion cells in its range.
+fn huge_xlsx() -> Vec<u8> {
+    use std::io::Write;
+    let mut out = Vec::new();
+    {
+        let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
+        let opts = zip::write::SimpleFileOptions::default();
+        let parts = [
+            (
+                "[Content_Types].xml",
+                r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#,
+            ),
+            (
+                "_rels/.rels",
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/workbook.xml",
+                r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/worksheets/sheet1.xml",
+                r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>first</t></is></c></row><row r="1048576"><c r="XFD1048576" t="inlineStr"><is><t>last</t></is></c></row></sheetData></worksheet>"#,
+            ),
+        ];
+        for (name, body) in parts {
+            z.start_file(name, opts).unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    }
+    out
+}
+
+/// A page whose content draws a form that draws itself.
+fn looping_pdf() -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /X 5 0 R >> >> /Contents 4 0 R >>".to_string(),
+        "<< /Length 5 >>\nstream\n/X Do\nendstream".to_string(),
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Resources << /XObject << /X 5 0 R >> >> /Length 5 >>\nstream\n/X Do\nendstream".to_string(),
+    ];
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).bytes());
+    for o in offsets {
+        pdf.extend(format!("{o:010} 00000 n \n").bytes());
+    }
+    pdf.extend(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .bytes(),
+    );
+    pdf
+}
+
+#[test]
+fn a_hostile_file_is_listed_and_does_not_take_the_indexer_down() {
+    let env = small_brain();
+    fs::write(env.brain.path().join("huge.xlsx"), huge_xlsx()).unwrap();
+    fs::write(env.brain.path().join("loop.pdf"), looping_pdf()).unwrap();
+    let mut wide = "a,".repeat(20_000);
+    wide.push('\n');
+    wide.push_str(&"1\n".repeat(2_000));
+    env.write("wide.csv", &wide);
+    let index = env.json(&["index", "--json"]);
+    assert_eq!(index["files"], 5, "{index}");
+    let listed: Vec<&str> = index["unconverted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["path"].as_str().unwrap())
+        .collect();
+    for file in ["huge.xlsx", "wide.csv"] {
+        assert!(listed.contains(&file), "{file} not listed: {listed:?}");
+    }
+    // The page that draws itself is read as nothing or refused, never a hang or a crash of `brain`.
+    assert!(listed.contains(&"loop.pdf"), "{listed:?}");
+}
+
 #[test]
 fn a_text_file_over_the_size_cap_is_listed_as_left_out() {
     let env = small_brain();

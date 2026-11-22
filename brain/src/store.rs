@@ -240,11 +240,12 @@ impl Store {
         Ok(())
     }
 
-    /// Every indexed file as the duplicate grouping sees it.
+    /// Every indexed raw file as the duplicate grouping sees it. Decisions, notes and ADRs are
+    /// never copies of one another: what they say is tied to where they are and what they declare.
     pub fn dedup_items(&self) -> Result<Vec<dedup::Item>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT path, hash, date, simhash FROM files")?;
+            .prepare("SELECT path, hash, date, simhash FROM files WHERE kind = 'raw'")?;
         let rows = stmt.query_map([], |r| {
             Ok(dedup::Item {
                 path: r.get(0)?,

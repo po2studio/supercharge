@@ -300,7 +300,7 @@ pub fn index(
     let git = git_dates(source);
     let params = Params::default();
     let cache = store.dir.join("convert");
-    let mut cached_hashes: HashSet<String> = HashSet::new();
+    let mut cached_keys: HashSet<String> = HashSet::new();
     let mut pending: Vec<Pending> = Vec::new();
     let mut queued = 0;
     for (
@@ -335,8 +335,10 @@ pub fn index(
                 continue;
             }
         }
+        // What a conversion is kept under: the file's content, read as the format its name says.
+        let cache_key = format!("{hash}-{}", format.name());
         if format.cached() {
-            cached_hashes.insert(hash.clone());
+            cached_keys.insert(cache_key.clone());
         }
         let fallback_date = |own: Option<&String>| {
             own.cloned()
@@ -364,14 +366,17 @@ pub fn index(
                 continue;
             }
         }
-        let converted = match format.cached().then(|| convert::cache_get(&cache, &hash)) {
+        let converted = match format
+            .cached()
+            .then(|| convert::cache_get(&cache, &cache_key))
+        {
             Some(Some(c)) => c,
             _ => {
                 report.converted += 1;
                 match convert::convert(*format, &bytes) {
                     Outcome::Text(c) => {
                         if format.cached() {
-                            convert::cache_put(&cache, &hash, &c);
+                            convert::cache_put(&cache, &cache_key, &c);
                         }
                         c
                     }
@@ -446,7 +451,7 @@ pub fn index(
     }
     report.embedded_chunks += flush(store, embedder, &mut pending)?;
     if store.dir.join("convert").is_dir() {
-        convert::cache_prune(&cache, &cached_hashes);
+        convert::cache_prune(&cache, &cached_keys);
     }
 
     // Of files that are copies of each other only the newest ranks; dates may have moved.
@@ -1244,5 +1249,32 @@ mod tests {
         assert!(groups
             .iter()
             .all(|g| g.starts_with("| id | item |\n|---|---|\n| ")));
+    }
+
+    #[test]
+    fn a_file_renamed_to_another_format_is_converted_as_that_format_not_from_the_cache() {
+        let (brain, cache) = setup(&[("keep.md", "x")]);
+        put(&brain, "a.docx", DOCX);
+        assert_eq!(run(&brain, &cache).files, 2);
+        fs::remove_file(brain.path().join("a.docx")).unwrap();
+        put(&brain, "a.pptx", DOCX);
+        let r = run(&brain, &cache);
+        assert_eq!(r.files, 1);
+        assert_eq!(r.unconverted.len(), 1);
+        assert!(
+            r.unconverted[0].reason.contains("not a PowerPoint"),
+            "{:?}",
+            r.unconverted
+        );
+    }
+
+    #[test]
+    fn a_decision_is_never_hidden_as_the_copy_of_a_file() {
+        let decision = "---\ntitle: Same\nkind: product\nstatus: accepted\n---\nWe keep prices in whole krónur and never in fractions, because every ledger and invoice the company has ever issued is in whole krónur, and nobody could explain a fraction to a customer.";
+        let (brain, cache) = setup(&[
+            ("decisions/2024-01-01-prices.md", decision),
+            ("z-copy.md", decision),
+        ]);
+        assert_eq!(run(&brain, &cache).duplicates, 0);
     }
 }

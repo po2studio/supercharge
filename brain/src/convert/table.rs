@@ -6,9 +6,8 @@ use super::{
     text::{decode, table},
     Converted,
 };
-use crate::doc;
 use calamine::{Data, Reader, SheetVisible};
-use std::{io::Cursor, time::Duration, time::UNIX_EPOCH};
+use std::io::Cursor;
 
 /// The delimiter of a `.csv`: Excel in many locales (Iceland's too) writes `;`.
 fn delimiter(text: &str) -> u8 {
@@ -43,17 +42,13 @@ pub fn csv(bytes: &[u8], tsv: bool) -> Converted {
     }
 }
 
-/// An Excel serial date as `YYYY-MM-DD`, with the time when there is one.
-fn excel_date(serial: f64) -> String {
-    let secs = ((serial - 25569.0) * 86400.0).round();
-    if !(0.0..4e11).contains(&secs) {
-        return serial.to_string();
-    }
-    let secs = secs as u64;
-    let date = doc::date_of(UNIX_EPOCH + Duration::from_secs(secs));
-    match secs % 86400 {
-        0 => date,
-        t => format!("{date} {:02}:{:02}", t / 3600, t % 3600 / 60),
+/// A date or date-time cell as `YYYY-MM-DD`, with the time when there is one; the workbook's own
+/// epoch (1900 or 1904) is applied.
+fn excel_date(d: &calamine::ExcelDateTime) -> String {
+    let (year, month, day, hour, minute, _, _) = d.to_ymd_hms_milli();
+    match (hour, minute) {
+        (0, 0) => format!("{year:04}-{month:02}-{day:02}"),
+        _ => format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}"),
     }
 }
 
@@ -65,7 +60,7 @@ fn cell_text(cell: &Data) -> String {
         Data::Float(f) if f.fract() == 0.0 && f.abs() < 1e15 => format!("{}", *f as i64),
         Data::Float(f) => f.to_string(),
         Data::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
-        Data::DateTime(d) if d.is_datetime() => excel_date(d.as_f64()),
+        Data::DateTime(d) if d.is_datetime() => excel_date(d),
         Data::DateTime(d) => d.as_f64().to_string(),
     }
 }
@@ -137,8 +132,19 @@ mod tests {
     }
 
     #[test]
-    fn excel_serials_are_dates() {
-        assert_eq!(excel_date(45292.0), "2024-01-01");
-        assert_eq!(excel_date(45292.5), "2024-01-01 12:00");
+    fn excel_dates_follow_the_workbooks_epoch() {
+        use calamine::{ExcelDateTime, ExcelDateTimeType::DateTime};
+        assert_eq!(
+            excel_date(&ExcelDateTime::new(45292.0, DateTime, false)),
+            "2024-01-01"
+        );
+        assert_eq!(
+            excel_date(&ExcelDateTime::new(45292.5, DateTime, false)),
+            "2024-01-01 12:00"
+        );
+        assert_eq!(
+            excel_date(&ExcelDateTime::new(43830.0, DateTime, true)),
+            "2024-01-01"
+        );
     }
 }

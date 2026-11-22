@@ -2,7 +2,7 @@
 //! text: headings keep their `#`, list items their `-`, tables become pipe tables.
 
 use super::{
-    text::{table, unescape},
+    text::{table, unescape, MAX_OUT},
     xml::{attr, tokens, Tok},
     Converted,
 };
@@ -101,6 +101,9 @@ struct Build {
 
 impl Build {
     fn para(&mut self, text: &str, heading: Option<usize>, list: bool) {
+        if self.out.len() > MAX_OUT {
+            return;
+        }
         let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         if text.is_empty() {
             return;
@@ -137,6 +140,9 @@ impl Build {
     }
 
     fn heading(&mut self, text: &str, level: usize) {
+        if self.out.len() > MAX_OUT {
+            return;
+        }
         self.block_gap();
         if self.first_heading.is_none() {
             self.first_heading = Some(doc::clip(text, doc::MAX_TITLE_CHARS));
@@ -156,7 +162,22 @@ impl Build {
     }
 
     fn end_cell(&mut self) {
+        self.end_cells(1);
+    }
+
+    /// Ends a cell that stands for `repeat` cells in a row (OpenDocument repeats equal cells).
+    /// Empty ones are kept up to a width no real table has, so the cells after them stay in
+    /// their columns; text is repeated only a few times.
+    fn end_cells(&mut self, repeat: usize) {
         if let (Some(text), Some(t)) = (self.cells.pop(), self.tables.last_mut()) {
+            let n = if text.trim().is_empty() {
+                repeat.min(256)
+            } else {
+                repeat.min(8)
+            };
+            for _ in 1..n {
+                t.row.push(text.clone());
+            }
             t.row.push(text);
         }
     }
@@ -188,6 +209,9 @@ impl Build {
                 }
                 cell.push_str(&row.join(", "));
             }
+            return;
+        }
+        if self.out.len() > MAX_OUT {
             return;
         }
         self.block_gap();
@@ -364,6 +388,9 @@ pub fn pptx(bytes: &[u8]) -> Result<Converted, String> {
     let mut out = String::new();
     let mut deck_title = None;
     for (n, name) in slides {
+        if out.len() > MAX_OUT {
+            break;
+        }
         let xml = part(&mut zip, &name).unwrap_or_default();
         let (title, body) = slide(&xml, false);
         deck_title = deck_title.or_else(|| title.clone());
@@ -399,6 +426,7 @@ pub fn odf(bytes: &[u8]) -> Result<Converted, String> {
     let (mut para, mut heading, mut in_para) = (String::new(), None, false);
     let (mut list, mut sheets, mut slides) = (0usize, false, false);
     let mut slide_no = 0;
+    let mut repeated = 1;
     for tok in tokens(&xml) {
         match tok {
             Tok::Open { name, attrs, empty } => match name {
@@ -434,15 +462,16 @@ pub fn odf(bytes: &[u8]) -> Result<Converted, String> {
                     }
                     b.start_table();
                 }
-                "table:table-cell" => {
+                "table:table-cell" | "table:covered-table-cell" => {
+                    let repeat = attr(attrs, "table:number-columns-repeated")
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(1);
                     b.start_cell();
-                    if empty {
-                        b.end_cell();
+                    if empty || name == "table:covered-table-cell" {
+                        b.end_cells(repeat);
+                    } else {
+                        repeated = repeat;
                     }
-                }
-                "table:covered-table-cell" => {
-                    b.start_cell();
-                    b.end_cell();
                 }
                 "draw:page" if slides => {
                     slide_no += 1;
@@ -457,7 +486,7 @@ pub fn odf(bytes: &[u8]) -> Result<Converted, String> {
                     para.clear();
                 }
                 "text:list-item" => list = list.saturating_sub(1),
-                "table:table-cell" => b.end_cell(),
+                "table:table-cell" => b.end_cells(std::mem::replace(&mut repeated, 1)),
                 "table:table-row" => b.end_row(),
                 "table:table" => b.end_table(),
                 _ => {}
@@ -589,6 +618,15 @@ mod tests {
             odf(&ods).unwrap().text,
             "## Prices\n\n| item | eur |\n|---|---|\n| kayak |  |"
         );
+        // Repeated empty cells inside a row keep the cells after them in their columns.
+        let gap = zipped(&[(
+            "content.xml",
+            r#"<office:document-content><office:spreadsheet><table:table table:name="T">
+            <table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell><table:table-cell><text:p>c</text:p></table:table-cell><table:table-cell><text:p>d</text:p></table:table-cell></table:table-row>
+            <table:table-row><table:table-cell><text:p>1</text:p></table:table-cell><table:table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>4</text:p></table:table-cell></table:table-row>
+            </table:table></office:spreadsheet></office:document-content>"#,
+        )]);
+        assert!(odf(&gap).unwrap().text.ends_with("| 1 |  |  | 4 |"));
     }
 
     #[test]

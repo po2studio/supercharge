@@ -8,13 +8,13 @@
     "mrr": 0.756
   },
   "about": {
-    "recall_at_5": 0.91,
-    "mrr": 0.867
+    "recall_at_5": 0.904,
+    "mrr": 0.87
   },
   "hybrid": {
-    "recall_at_5": 0.871,
-    "mrr": 0.82
+    "recall_at_5": 0.884,
+    "mrr": 0.829
   },
-  "p50_ms": 7.664,
-  "chunks_per_s": 18.677
+  "p50_ms": 4.0,
+  "chunks_per_s": 60.5
 }

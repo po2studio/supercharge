@@ -3,10 +3,6 @@
 use super::Converted;
 use crate::doc;
 use pdf_extract::{Dictionary, Document, Object};
-use std::{sync::mpsc, time::Duration};
-
-/// A malformed PDF can send a parser in circles; it is given this long.
-const TIME_LIMIT: Duration = Duration::from_secs(120);
 
 pub fn convert(bytes: &[u8]) -> Result<Converted, String> {
     if !bytes[..bytes.len().min(1024)]
@@ -15,27 +11,7 @@ pub fn convert(bytes: &[u8]) -> Result<Converted, String> {
     {
         return Err("not a PDF (it has no %PDF- header)".into());
     }
-    let (tx, rx) = mpsc::channel();
-    let owned = bytes.to_vec();
-    // A deep page tree can overflow the default stack, and the parser panics on some inputs.
-    let worker = std::thread::Builder::new()
-        .stack_size(256 << 20)
-        .spawn(move || {
-            let _ = tx.send(extract(&owned));
-        })
-        .map_err(|e| format!("cannot be read ({e})"))?;
-    match rx.recv_timeout(TIME_LIMIT) {
-        Ok(result) => {
-            let _ = worker.join();
-            result
-        }
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            Err(format!("took over {} s to read", TIME_LIMIT.as_secs()))
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err("cannot be read (the parser failed)".into())
-        }
-    }
+    extract(bytes)
 }
 
 fn extract(bytes: &[u8]) -> Result<Converted, String> {
