@@ -525,7 +525,7 @@ fn broken_links(file: &str, text: &str, brain: &Path) -> Vec<String> {
 
 /// The link destination at the start of `s`, which follows `](`, and how much of `s` it took:
 /// `<…>` may hold spaces; otherwise it runs to the first space or the `)` that closes the link,
-/// with balanced parentheses and `\` escapes inside.
+/// with balanced parentheses inside, and `\` before ASCII punctuation as an escape.
 fn destination(s: &str) -> (String, usize) {
     let trimmed = s.trim_start();
     let skipped = s.len() - trimmed.len();
@@ -533,15 +533,14 @@ fn destination(s: &str) -> (String, usize) {
         let end = inner.find('>').unwrap_or(inner.len());
         return (inner[..end].to_string(), skipped + 1 + end);
     }
-    let (mut out, mut depth, mut escaped) = (String::new(), 0, false);
-    for (i, c) in trimmed.char_indices() {
-        if escaped {
-            out.push(c);
-            escaped = false;
-            continue;
-        }
+    let (mut out, mut depth) = (String::new(), 0);
+    let mut chars = trimmed.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
         match c {
-            '\\' => escaped = true,
+            '\\' => match chars.next_if(|(_, n)| n.is_ascii_punctuation()) {
+                Some((_, n)) => out.push(n),
+                None => out.push(c),
+            },
             '(' => {
                 depth += 1;
                 out.push(c);
@@ -1078,6 +1077,14 @@ mod tests {
             broken_links("notes/n.md", "[x](../../../etc/passwd)", dir.path()),
             vec!["broken link ../../../etc/passwd"]
         );
+    }
+
+    #[test]
+    fn a_backslash_escapes_only_punctuation_in_a_link_destination() {
+        assert_eq!(destination(r"../a\b.md) rest").0, r"../a\b.md");
+        assert_eq!(destination(r"../a\(b\).md) rest").0, "../a(b).md");
+        assert_eq!(destination("a(b).md c").0, "a(b).md");
+        assert_eq!(destination("<a b.md> c").0, "a b.md");
     }
 
     #[test]
