@@ -404,14 +404,16 @@ pub fn clean_commit(root: &Path) -> Result<String> {
     }
     // Ignored files are read by the indexer like any other, but are not in the commit. Hidden
     // names (`.cache/`, `.DS_Store`) are never indexed, so they do not count.
+    // NUL-separated, so a name with a space or a non-ASCII letter comes unquoted.
     let ignored = git(&[
         "status",
         "--porcelain",
+        "-z",
         "--ignored",
         "--untracked-files=all",
     ])?;
     let loose: Vec<&str> = ignored
-        .lines()
+        .split('\0')
         .filter_map(|l| l.strip_prefix("!! "))
         .filter(|p| !p.split('/').any(|c| c.starts_with('.')))
         .collect();

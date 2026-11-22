@@ -442,6 +442,11 @@ fn pack_refuses_ignored_files_and_honours_repo() {
         "{stderr}"
     );
     fs::remove_dir_all(maker.path().join("scratch")).unwrap();
+    // A hidden folder with a space in its name is ignored too, and never indexed: no objection.
+    write(maker.path(), ".gitignore", "scratch/\n.my cache/\n");
+    git(maker.path(), &["add", "-A"]);
+    git(maker.path(), &["commit", "-qm", "ignore a hidden folder"]);
+    write(maker.path(), ".my cache/x.md", "# Cache\n");
     ok(brain_in(elsewhere.path(), cache.path(), &gh, &args));
 }
 
@@ -577,6 +582,33 @@ fn bench_works_with_a_relative_dir() {
     fs::create_dir(cwd.path().join("work")).unwrap();
     let out = brain(
         cwd.path(),
+        cache.path(),
+        "/usr/bin:/bin",
+        cache.path(),
+        &[
+            "bench",
+            "--chunks",
+            "800",
+            "--embed-sample",
+            "8",
+            "--dir",
+            "work",
+            "--json",
+        ],
+    );
+    assert_eq!(json(out)["chunks"], 800);
+}
+
+// ... and a `--dir` inside a git repo is not taken for a project by the searches the bench starts.
+#[test]
+fn bench_inside_a_repo_does_not_search_the_repo() {
+    let repo = TempDir::new().unwrap();
+    git(repo.path(), &["init", "-q"]);
+    write(repo.path(), "README.md", "# A repo\n\nWords.\n");
+    let cache = TempDir::new().unwrap();
+    fs::create_dir(repo.path().join("work")).unwrap();
+    let out = brain(
+        repo.path(),
         cache.path(),
         "/usr/bin:/bin",
         cache.path(),

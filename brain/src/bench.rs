@@ -297,7 +297,9 @@ fn cli_p50(root: &Path, queries: &[(String, String)]) -> Result<Option<f64>> {
     for (terms, about) in queries.iter().cycle().take(CLI_RUNS) {
         let t = Instant::now();
         let out = Command::new(&exe)
-            .current_dir(root)
+            // Not a folder of a project, wherever `--dir` is: a project around it would be
+            // searched too.
+            .current_dir("/")
             .env("SUPERCHARGE_CACHE_DIR", &cache)
             .arg("--source")
             .arg(root)
