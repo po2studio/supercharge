@@ -70,6 +70,23 @@ pub struct FileRow {
     pub own_date: Option<String>,
 }
 
+/// A note in the index.
+pub struct NoteRow {
+    pub path: String,
+    pub date: String,
+    pub simhash: Option<u64>,
+    pub meta: Meta,
+}
+
+/// What a file's `meta` column holds: nothing, or what the file declared as JSON.
+fn meta_of(column: &str) -> Result<Meta> {
+    if column.is_empty() {
+        Ok(Meta::default())
+    } else {
+        Ok(serde_json::from_str(column)?)
+    }
+}
+
 /// A chunk ready to be stored.
 pub struct NewChunk {
     pub heading: String,
@@ -217,6 +234,62 @@ impl Store {
             ))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The content hash of a file the index holds or has found to have no text.
+    pub fn hash_of(&self, path: &str) -> Result<Option<String>> {
+        for table in ["files", "unconverted"] {
+            let hash = self
+                .conn
+                .query_row(
+                    &format!("SELECT hash FROM {table} WHERE path = ?1"),
+                    [path],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if hash.is_some() {
+                return Ok(hash);
+            }
+        }
+        Ok(None)
+    }
+
+    /// What a note says about itself; `None` when `path` is no note in this index.
+    pub fn note(&self, path: &str) -> Result<Option<Meta>> {
+        let meta: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT meta FROM files WHERE path = ?1 AND kind = 'note'",
+                [path],
+                |r| r.get(0),
+            )
+            .optional()?;
+        meta.map(|m| meta_of(&m)).transpose()
+    }
+
+    /// Every note in the index, by path.
+    pub fn notes(&self) -> Result<Vec<NoteRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, date, simhash, meta FROM files WHERE kind = 'note' ORDER BY path",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (path, date, simhash, meta) = row?;
+            Ok(NoteRow {
+                path,
+                date,
+                simhash: simhash.map(|f| f as u64),
+                meta: meta_of(&meta)?,
+            })
+        })
+        .collect()
     }
 
     /// path → (content hash, reason) of every file that has no text to index.

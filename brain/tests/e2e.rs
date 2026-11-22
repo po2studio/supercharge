@@ -725,3 +725,274 @@ fn a_superseded_decision_never_comes_back_as_current_and_an_amended_adr_brings_i
     );
     assert_eq!(before, snapshot(&repo), "nothing in the project is written");
 }
+
+fn sha256(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+/// A note as an agent writes it: frontmatter with the sources it was made from, and a body.
+fn note(title: &str, questions: &[&str], sources: &[(&str, &str)], verified: &str) -> String {
+    let mut text = format!(
+        "---\ntitle: {title}\nsummary: {title}, in one line\naliases: [trip rules]\nquestions:\n"
+    );
+    for q in questions {
+        text += &format!("  - {q}\n");
+    }
+    text += "sources:\n";
+    for (path, content) in sources {
+        text += &format!("  - path: {path}\n    hash: {}\n", sha256(content));
+    }
+    text += &format!("verified: {verified}\n---\n\n");
+    text += "Trips need approval ten days ahead, and meals abroad are a flat EUR 45 a day.\n";
+    text
+}
+
+/// Notes stay true: a note whose sources changed or went is flagged `stale` in hits and listed
+/// by `stats`, and ranks below the raw files; a refreshed note is fresh again and ranks first; a
+/// note whose only source is gone is reported; two notes from the same sources are reported as
+/// duplicates. Nothing in a source is written.
+#[test]
+fn a_note_is_stale_when_its_sources_change_and_fresh_again_once_refreshed() {
+    let dir = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+    let write = |p: &str, t: &str| {
+        let full = dir.path().join(p);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(full, t).unwrap();
+    };
+    write(
+        "repo/AGENTS.md",
+        "# AGENTS.md\n\n## Supercharge\n\n```yaml\ndocs: docs\nbrain:\n  - path: ../policies\n  - path: ../brain\n    update: true\n```\n",
+    );
+    let product = "# Product\n\nA paused invoice stays paused until someone resumes it.\n";
+    write("repo/docs/PRODUCT.md", product);
+    let travel =
+        "# Trips\n\nEvery business trip needs written approval ten days before departure.\n";
+    let meals = "# Meals\n\nOn trips abroad meals are reimbursed at a flat EUR 45 per day.\n";
+    write("policies/travel.md", travel);
+    write("policies/meals.md", meals);
+    write(
+        "policies/old-rule.md",
+        "# Old rule\n\nParking is free on Fridays.\n",
+    );
+    let trip_note = |verified: &str, travel: &str| {
+        note(
+            "Business trip approval and meals",
+            &["How early must a trip be approved and what can I claim for meals?"],
+            &[
+                ("../policies:travel.md", travel),
+                ("../policies:meals.md", meals),
+            ],
+            verified,
+        )
+    };
+    write("brain/notes/trip.md", &trip_note("2025-03-01", travel));
+    // The same two sources again: two notes about the same thing.
+    write(
+        "brain/notes/trip-again.md",
+        &note(
+            "Trips, once more",
+            &["Rules for business trips?"],
+            &[
+                ("../policies:meals.md", meals),
+                ("../policies:travel.md", travel),
+            ],
+            "2025-03-02",
+        ),
+    );
+    // A note on a project file, and one whose only source is deleted below.
+    write(
+        "brain/notes/paused.md",
+        &note(
+            "Paused invoices",
+            &["What happens to a paused invoice?"],
+            &[("project:docs/PRODUCT.md", product)],
+            "2025-03-03",
+        ),
+    );
+    write(
+        "brain/notes/parking.md",
+        &note(
+            "Parking on Fridays",
+            &["Is parking free on Fridays?"],
+            &[(
+                "../policies:old-rule.md",
+                "# Old rule\n\nParking is free on Fridays.\n",
+            )],
+            "2025-03-04",
+        ),
+    );
+    let repo = dir.path().join("repo");
+    let run = |args: &[&str]| -> Value {
+        let out = Command::new(env!("CARGO_BIN_EXE_brain"))
+            .current_dir(&repo)
+            .env_clear()
+            .env("SUPERCHARGE_CACHE_DIR", cache.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap_or(Value::Null)
+    };
+    let ask =
+        || -> Vec<Value> {
+            run(&[
+            "search", "--json", "-k", "10", "--about",
+            "How early must a business trip be approved, and what can I claim for meals abroad?",
+        ])
+        .as_array()
+        .unwrap()
+        .clone()
+        };
+    let notes_of = |stats: &Value| -> Value {
+        stats["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["source"] == "../brain")
+            .unwrap()["notes"]
+            .clone()
+    };
+    let names = |v: &Value| -> Vec<String> {
+        let mut out: Vec<String> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| {
+                n["path"]
+                    .as_str()
+                    .unwrap_or_else(|| n.as_str().unwrap())
+                    .to_string()
+            })
+            .collect();
+        out.sort();
+        out
+    };
+
+    // Fresh: the note answers the question, is not stale and ranks first.
+    let indexed = run(&["index", "--json"]);
+    assert_eq!(indexed["notes"]["stale"], 0, "{indexed}");
+    assert_eq!(indexed["notes"]["total"], 4);
+    let hits = ask();
+    assert_eq!(hits[0]["path"], "notes/trip.md", "{hits:?}");
+    assert_eq!(hits[0]["kind"], "note");
+    assert_eq!(hits[0]["stale"], false);
+    assert_eq!(
+        hits[0]["date"], "2025-03-01",
+        "a note is dated by when it was verified"
+    );
+    assert_eq!(
+        hits[0]["hash"].as_str().unwrap().len(),
+        64,
+        "hits give the hash a note cites"
+    );
+
+    // A source is gone: its note is listed as pointing at nothing, and is stale.
+    fs::remove_file(dir.path().join("policies/old-rule.md")).unwrap();
+    let indexed = run(&["index", "--json"]);
+    assert_eq!(indexed["notes"]["stale"], 1);
+    let notes = notes_of(&run(&["stats", "--json"]));
+    assert_eq!(names(&notes["orphans"]), ["notes/parking.md"], "{notes}");
+    assert!(names(&notes["stale"]).contains(&"notes/parking.md".to_string()));
+    // Two notes from the same sources are reported once as duplicates.
+    assert_eq!(notes["duplicates"].as_array().unwrap().len(), 1, "{notes}");
+    assert_eq!(notes["total"], 4);
+
+    // A raw source changes: the notes built from it are stale, flagged in hits, listed by stats
+    // with what changed, and rank below the raw files.
+    let changed =
+        "# Trips\n\nEvery business trip needs written approval fourteen days before departure.\n";
+    write("policies/travel.md", changed);
+    let indexed = run(&["index", "--json"]);
+    assert_eq!(indexed["notes"]["stale"], 3);
+    let hits = ask();
+    let at = |p: &str| {
+        hits.iter()
+            .position(|h| h["path"] == p)
+            .unwrap_or(usize::MAX)
+    };
+    assert_eq!(hits[at("notes/trip.md")]["stale"], true, "{hits:?}");
+    assert!(
+        at("notes/trip.md") > at("travel.md") && at("notes/trip.md") > at("meals.md"),
+        "a stale note ranks below the raw files: {hits:?}"
+    );
+    let stale = notes_of(&run(&["stats", "--json"]))["stale"].clone();
+    assert_eq!(
+        names(&stale),
+        ["notes/parking.md", "notes/trip-again.md", "notes/trip.md"]
+    );
+    let trip = stale
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["path"] == "notes/trip.md")
+        .unwrap();
+    let states: Vec<(&str, &str)> = trip["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["path"].as_str().unwrap(), s["state"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("../policies:travel.md", "changed"),
+            ("../policies:meals.md", "fresh")
+        ]
+    );
+    assert_eq!(trip["sources"][0]["current"], sha256(changed));
+    // The note on the project's file is untouched by it.
+    assert!(!names(&stale).contains(&"notes/paused.md".to_string()));
+    // Text output says so too.
+    let out = Command::new(env!("CARGO_BIN_EXE_brain"))
+        .current_dir(&repo)
+        .env_clear()
+        .env("SUPERCHARGE_CACHE_DIR", cache.path())
+        .arg("stats")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("stale notes (3)") && text.contains("notes/trip.md"),
+        "{text}"
+    );
+
+    // The project's own docs change too.
+    write(
+        "repo/docs/PRODUCT.md",
+        "# Product\n\nA paused invoice resumes after 7 days.\n",
+    );
+    run(&["index", "--json"]);
+    let stale = notes_of(&run(&["stats", "--json"]))["stale"].clone();
+    assert!(
+        names(&stale).contains(&"notes/paused.md".to_string()),
+        "{stale}"
+    );
+
+    // Refreshed: new hash, today's `verified`; fresh again, ranked first again.
+    write("brain/notes/trip.md", &trip_note("2025-04-01", changed));
+    run(&["index", "--json"]);
+    let hits = ask();
+    assert_eq!(hits[0]["path"], "notes/trip.md", "{hits:?}");
+    assert_eq!(hits[0]["stale"], false);
+    assert_eq!(hits[0]["date"], "2025-04-01");
+    assert!(!names(&notes_of(&run(&["stats", "--json"]))["stale"])
+        .contains(&"notes/trip.md".to_string()));
+    // Reading and indexing wrote nothing: the sources hold what this test put there.
+    let listing = |d: &str| -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir.path().join(d))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(listing("brain"), ["notes"]);
+    assert_eq!(listing("policies"), ["meals.md", "travel.md"]);
+    assert_eq!(listing("repo"), ["AGENTS.md", "docs"]);
+}

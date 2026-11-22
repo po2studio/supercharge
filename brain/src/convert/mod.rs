@@ -270,7 +270,7 @@ impl Format {
 
 #[derive(Debug, PartialEq)]
 pub enum Outcome {
-    Text(Converted),
+    Text(Box<Converted>),
     /// Why this file has no text to index.
     Unconverted(String),
 }
@@ -459,7 +459,7 @@ pub fn convert(format: Format, bytes: &[u8]) -> Outcome {
             MAX_TEXT_BYTES >> 20
         ));
     }
-    Outcome::Text(converted)
+    Outcome::Text(Box::new(converted))
 }
 
 #[derive(Serialize, Deserialize)]

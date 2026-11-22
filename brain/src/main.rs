@@ -7,6 +7,7 @@ mod embed;
 mod eval;
 mod index;
 mod init;
+mod notes;
 mod search;
 mod sources;
 mod store;
@@ -154,6 +155,8 @@ struct Combined {
     #[serde(flatten)]
     total: index::Report,
     sources: Vec<Named>,
+    /// The notes of every source, read against the sources as they are now.
+    notes: notes::Summary,
 }
 
 fn run() -> Result<()> {
@@ -172,7 +175,9 @@ fn run() -> Result<()> {
             let mut combined = Combined {
                 total: index::Report::default(),
                 sources: Vec::new(),
+                notes: notes::Summary::default(),
             };
+            let mut opened = Vec::new();
             for source in resolved.live() {
                 let mut store = Store::create(&store::index_path(&source.key())?, &source.root)?;
                 let report = index::index(source, &mut store, &mut embedder, true)?;
@@ -181,6 +186,12 @@ fn run() -> Result<()> {
                     source: source.label.clone(),
                     report,
                 });
+                opened.push(Opened::new(source, store));
+            }
+            // A note is stale when a file it was made from changed or went, which only shows
+            // once every source is indexed.
+            for n in 0..opened.len() {
+                combined.notes.add(&notes::report(&opened, n)?);
             }
             if *json {
                 println!("{}", serde_json::to_string(&combined)?);
@@ -194,6 +205,13 @@ fn run() -> Result<()> {
                     if r.duplicates > 0 {
                         println!("  {} files are copies of a newer file", r.duplicates);
                     }
+                }
+                let n = &combined.notes;
+                if n.total > 0 {
+                    println!(
+                        "notes: {} ({} stale, {} pointing at nothing, {} duplicates); see `brain stats`",
+                        n.total, n.stale, n.orphans, n.duplicates
+                    );
                 }
                 print_unconverted(
                     &combined
@@ -348,9 +366,20 @@ fn run() -> Result<()> {
 fn stats(resolved: &Resolved, json: bool) -> Result<()> {
     let mut sources = Vec::new();
     let (mut files, mut chunks) = (0, 0);
-    for source in resolved.live() {
+    let live = resolved.live();
+    let mut opened = Vec::new();
+    let mut slot = Vec::new();
+    for source in &live {
+        let store = Store::open(&store::index_path(&source.key())?)?;
+        slot.push(store.map(|store| {
+            opened.push(Opened::new(source, store));
+            opened.len() - 1
+        }));
+    }
+    let mut reports: Vec<(String, notes::Report)> = Vec::new();
+    for (source, slot) in live.iter().zip(slot) {
         let path = store::index_path(&source.key())?;
-        let Some(store) = Store::open(&path)? else {
+        let Some(n) = slot else {
             sources.push(serde_json::json!({
                 "source": source.label,
                 "root": source.root,
@@ -358,6 +387,7 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
             }));
             continue;
         };
+        let store = &opened[n].store;
         let (f, c) = store.counts()?;
         files += f;
         chunks += c;
@@ -366,10 +396,14 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
                 serde_json::from_str(&s).unwrap_or_default()
             }))
         };
+        let note_report = notes::report(&opened, n)?;
+        let note_json = serde_json::to_value(&note_report)?;
+        reports.push((source.label.clone(), note_report));
         sources.push(serde_json::json!({
             "source": source.label,
             "root": source.root,
             "indexed": true,
+            "notes": note_json,
             "update": source.update,
             "index": path,
             "index_bytes": std::fs::metadata(&path)?.len(),
@@ -456,6 +490,37 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
         );
     }
     println!();
+    let mut stale = Vec::new();
+    let mut orphans = Vec::new();
+    let mut duplicates = Vec::new();
+    for (label, r) in &reports {
+        for n in &r.stale {
+            let why: Vec<String> = n
+                .sources
+                .iter()
+                .filter(|c| c.state != notes::State::Fresh)
+                .map(|c| format!("{} {}", c.path, c.state))
+                .collect();
+            stale.push(format!(
+                "{label}: {} ({})",
+                n.path,
+                if why.is_empty() {
+                    "names no source".to_string()
+                } else {
+                    why.join(", ")
+                }
+            ));
+        }
+        orphans.extend(r.orphans.iter().map(|p| format!("{label}: {p}")));
+        duplicates.extend(
+            r.duplicates
+                .iter()
+                .map(|d| format!("{label}: {} duplicates {}", d.path, d.of)),
+        );
+    }
+    print_list("stale notes", &stale);
+    print_list("notes pointing at nothing", &orphans);
+    print_list("duplicate notes", &duplicates);
     print_unconverted(&unconverted);
     print_skipped(&skipped);
     Ok(())
