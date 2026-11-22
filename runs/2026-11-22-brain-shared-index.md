@@ -55,9 +55,9 @@ Two things the bench found and the slice fixed: the 1-bit scan read every code t
 
 **Extrapolations, not measurements.** The scan is linear: 1 000 000 chunks is about 500 ms single-threaded plus the rest of the search, so just over the 500 ms target on this machine in one thread; over 6 threads it should be about a sixth of that plus a fixed 10 to 20 ms. A 100 000-document brain is about 210 MB packed (2.1 KB a document), about 30 s to download at the 14 s per 102 MB seen here. Neither is a pass until the Mac run below.
 
-## What is still open
+## The scale measurements, on the owner's Mac
 
-Acceptance criteria 4 and 5 of slice 6 need two numbers on a machine this host is not: the first index of a 100 000-document brain from a shared one, and `brain bench` at 1 000 000 chunks (p50 at most 500 ms; indexing at least 12 chunks/s). The owner runs them on an Apple Silicon MacBook after the 0.6.0 release:
+Acceptance criteria 4 and 5 of slice 6 need two numbers on a machine this host is not: the first index of a 100 000-document brain from a shared one, and `brain bench` at 1 000 000 chunks (p50 at most 500 ms; indexing at least 12 chunks/s). The owner ran them on an Apple Silicon MacBook after the 0.6.0 release; both pass (below). To repeat them:
 
 ```sh
 git clone --branch feature/0002-second-brain https://github.com/po2studio/supercharge.git && cd supercharge   # or main, once the feature has shipped
@@ -66,7 +66,7 @@ mkdir -p ~/brain-bench && gh release download brain-v0.6.0 --repo po2studio/supe
 brain/scripts/scale.sh ~/brain-bench/brain-macos-arm64 1000 100000           # AC 4: the 100 000-document brain (1000 chunks for its bench, which AC 5 already ran)
 ```
 
-`scale.sh` with 100 000 documents prints two times: the CI's build from scratch (it embeds every document once, so hours on a laptop) and a fresh machine's first index from the shared one it made (the number the criterion is about). Both go in the PR. A pass is search p50 at most 500 ms on the `search p50 hybrid` line of the first command at 1 000 000 chunks, at least 12 chunks/s on its `indexing` line, and the second command's fresh-machine line in minutes. Until those are in the PR, the two criteria stay open.
+`scale.sh` with 100 000 documents prints two times: the CI's build from scratch (it embeds every document once, so most of an hour on a laptop) and a fresh machine's first index from the shared one it made (the number the criterion is about). A pass is search p50 at most 500 ms on the `search p50 hybrid` line of the first command at 1 000 000 chunks, at least 12 chunks/s on its `indexing` line, and the second command's fresh-machine line in minutes.
 
 ### The owner's Mac run
 
@@ -83,7 +83,14 @@ On the owner's MacBook (Apple Silicon, Darwin arm64, 12 cores), `brain` 0.6.0 fr
 
 The criterion names a 6-core CPU and this one has 12; the 1-bit scan uses at most 8 threads, so on 6 cores the hybrid p50 should be about 240 to 300 ms (an estimate, not measured).
 
-**AC 4:** `scale.sh … 1000 100000` was still building the 100 000-document brain when this was written; its fresh-machine line goes in the feature's PR into `main`.
+**AC 4: passes.** `scale.sh … 1000 100000` on the same Mac:
+
+| a brain of 100 000 one-chunk documents | measured |
+|---|---|
+| the CI's build from scratch (`brain pack`) | 2 764 s (46 min, 36 chunks/s); asset 199 MB |
+| a fresh machine's first index: pulls the shared index, embeds only what differs | **5 s** (0 chunks embedded; 2.8 s of it opening the 100 000 files) |
+
+The 210 MB packed size extrapolated above came out at 199 MB.
 
 ## What went wrong
 
