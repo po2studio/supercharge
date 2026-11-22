@@ -15,7 +15,7 @@ No binary at `~/.cache/supercharge/brain/<version>/brain`? Say its size (your pl
 
 ## Answer
 
-Search in a small subagent (omp's `sonic` on `smol`; in Claude Code a fresh one on `haiku`), from the project's root: `brain search "<question>"` (`--json` gives each hit's absolute `file`). Nothing answers? Rephrase, up to three times, in other words or another language. Answer in at most 10 lines, each claim with its path and date. The newer of two disagreeing files wins; say so. A superseded ADR is history; an amended one comes with its amendments. If nothing answers, say so; don't guess.
+Search in a small subagent (omp's `sonic` on `smol`; in Claude Code a fresh one on `haiku`), from the project's root: `brain search "<question>"` (`--json` gives each hit's absolute `file`). Nothing answers? Rephrase, up to three times, in other words or another language; still nothing, say so, don't guess. Answer in at most 10 lines, each claim with its path and date. The newer of two disagreeing files wins; say so. A superseded ADR is history; an amended one comes with its amendments.
 
 ## Before asking
 
@@ -28,9 +28,9 @@ When a source sets `update: true` and the binary is cached (never download here)
 1. Searches those sources for what the answers or the shipped work make untrue.
 2. Edits those Markdown and text documents in place, minimally, and appends `- YYYY-MM-DD: <what changed> (<where it was decided>)` under a `## History` heading at the end. Never the project's own files (PRs change them). A Word file, PDF or spreadsheet is reported, not edited.
 3. Writes a new document, in the first `update: true` source, only for a decision nothing covers that a future agent would undo or ask about. Technical ones are ADRs.
-4. In a git repo: commit, `git pull --rebase`, push; stop on a conflict.
+4. In a git repo, on its default branch: commit, `git pull --rebase`, push; stop on a conflict.
 5. Reports the files edited and those it could not.
 
 ## Brain repo CI
 
-An `update: true` source that is a GitHub repo gets `.github/workflows/brain.yml`: `brain-ci.yml` beside this file, `@TAG@`, `@REPO@`, `@ASSET@`, `@SHA256@` filled from `brain.json`. It publishes the index for other machines. Write it when missing or naming another tag; commit and push.
+An `update: true` source that is a GitHub repo gets `.github/workflows/brain.yml`: `brain-ci.yml` beside this file, `@TAG@`, `@REPO@`, `@ASSET@`, `@SHA256@` filled from `brain.json`'s linux-x64 entry. Write it when missing or naming another tag; commit and push.
