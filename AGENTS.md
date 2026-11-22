@@ -10,7 +10,7 @@ Supercharge is a skill bundle for omp and Claude Code. The skills are `skills/*/
 
 `python3 scripts/check.py` checks each skill's frontmatter (a description's first sentence is at most 57 characters, the whole at most 1024), `skills/brain/brain.json` and the relative links in the Markdown; `python3 -m unittest scripts/test_check.py` tests the `brain.json` rules. CI runs both.
 
-For `brain/` (CI runs these when `brain/` changes; the first build needs `curl` and the network once, to fetch the model into `brain/assets/`, and needs a C and C++ compiler): `cd brain && cargo fmt --check && cargo clippy --release --all-targets -- -D warnings && cargo test --release && cargo run --release -- eval`. `SUPERCHARGE_CACHE_DIR` moves the index cache, which tests use. `brain/scripts/smoke.sh <binary>` runs a built binary alone with an empty environment.
+For `brain/` (CI runs these when `brain/` changes; the first build needs `curl` and the network once, to fetch the model into `brain/assets/`, and needs a C and C++ compiler): `cd brain && cargo fmt --check && cargo clippy --release --all-targets -- -D warnings && cargo test --release && cargo run --release -- eval`. `SUPERCHARGE_CACHE_DIR` moves the index cache, which tests use. `brain/scripts/smoke.sh <binary>` runs a built binary alone with an empty environment. `brain/scripts/scale.sh <binary> [chunks] [docs]` runs the two scale measurements (`brain bench`, and a fresh machine's first index from a shared one) with a released binary; it is not a CI step.
 
 ## Conventions
 

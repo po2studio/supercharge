@@ -52,6 +52,8 @@ CREATE TABLE chunks (
     code BLOB NOT NULL
 );
 CREATE INDEX chunks_file ON chunks(file_id);
+-- The first pass of a vector search reads every code: from this index, not the wide rows.
+CREATE INDEX chunks_codes ON chunks(file_id, code);
 CREATE INDEX files_status ON files(status);
 CREATE VIRTUAL TABLE fts USING fts5(header, body, tokenize = 'unicode61 remove_diacritics 2');
 ";
@@ -156,11 +158,7 @@ impl Store {
         };
         if !store.matches()? {
             drop(store);
-            for suffix in ["", "-wal", "-shm"] {
-                let mut p = path.as_os_str().to_owned();
-                p.push(suffix);
-                let _ = std::fs::remove_file(p);
-            }
+            Store::remove_files(path);
             store = Store {
                 conn: connect(path)?,
                 dir: dir.to_path_buf(),
@@ -172,6 +170,29 @@ impl Store {
             store.set_meta("root", &root.to_string_lossy())?;
         }
         Ok(store)
+    }
+
+    /// Folds the write-ahead log into the file, so the file alone holds the index.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok(())
+    }
+
+    /// The index file.
+    pub fn path(&self) -> Result<PathBuf> {
+        Ok(PathBuf::from(
+            self.conn.path().context("the index is not a file")?,
+        ))
+    }
+
+    /// Deletes an index file and what SQLite keeps beside it.
+    pub fn remove_files(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let mut p = path.as_os_str().to_owned();
+            p.push(suffix);
+            let _ = std::fs::remove_file(p);
+        }
     }
 
     /// Opens an existing index for reading; `None` when there is none, or it is out of date.

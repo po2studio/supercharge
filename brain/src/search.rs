@@ -468,6 +468,100 @@ fn quote_words(terms: &str) -> String {
         .join(" ")
 }
 
+/// Threads that read the 1-bit codes at once: more than this and SQLite's page cache and the
+/// disk, not the cores, are what a scan waits for.
+const MAX_SCAN_THREADS: usize = 8;
+/// Chunks from which the scan is split over threads: below it, opening a connection per thread
+/// costs more than the scan (measured at 50 000 chunks: 27 ms in one thread, 40 ms in six).
+const PARALLEL_SCAN_FROM: usize = 200_000;
+
+/// The `keep` chunks whose 1-bit codes are nearest `qcode`, as `(distance, id)`, nearest first
+/// and by id on a tie. Reading every code of a big brain is the cost of a search, so the chunks
+/// are split by file into `threads` ranges, each read on a connection of its own.
+fn nearest_codes(
+    store: &Store,
+    filter: &str,
+    values: &[Value],
+    qcode: &[u8],
+    keep: usize,
+    threads: usize,
+) -> Result<Vec<(u32, i64)>> {
+    let scan =
+        |conn: &rusqlite::Connection, range: Option<(i64, i64)>| -> Result<Vec<(u32, i64)>> {
+            let (clause, mut bound) = match (range, filter.is_empty()) {
+                (None, _) => (filter.to_string(), values.to_vec()),
+                (Some(_), true) => (" WHERE file_id BETWEEN ? AND ?".to_string(), Vec::new()),
+                (Some(_), false) => (
+                    format!("{filter} AND file_id BETWEEN ? AND ?"),
+                    values.to_vec(),
+                ),
+            };
+            if let Some((from, to)) = range {
+                bound.push(Value::Integer(from));
+                bound.push(Value::Integer(to));
+            }
+            let mut stmt = conn.prepare(&format!("SELECT id, code FROM chunks{clause}"))?;
+            // The distance is taken on the bytes SQLite holds: no copy of each code.
+            let rows = stmt.query_map(rusqlite::params_from_iter(bound), |r| {
+                Ok((
+                    vecs::hamming(qcode, r.get_ref(1)?.as_blob()?),
+                    r.get::<_, i64>(0)?,
+                ))
+            })?;
+            let mut near: Vec<(u32, i64)> = Vec::new();
+            for row in rows {
+                near.push(row?);
+                if near.len() >= keep * 4 {
+                    near.select_nth_unstable(keep);
+                    near.truncate(keep);
+                }
+            }
+            Ok(near)
+        };
+    let (low, high): (Option<i64>, Option<i64>) =
+        store
+            .conn
+            .query_row("SELECT min(file_id), max(file_id) FROM chunks", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+    let mut near = match (low, high) {
+        (Some(low), Some(high)) if threads > 1 && high > low => {
+            let path = store.path()?;
+            let width = (high - low) / threads as i64 + 1;
+            let parts: Vec<Result<Vec<(u32, i64)>>> = std::thread::scope(|scope| {
+                let workers: Vec<_> = (0..threads as i64)
+                    .map(|n| {
+                        let (path, scan) = (&path, &scan);
+                        scope.spawn(move || {
+                            let conn = rusqlite::Connection::open_with_flags(
+                                path,
+                                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                            )?;
+                            scan(&conn, Some((low + n * width, low + (n + 1) * width - 1)))
+                        })
+                    })
+                    .collect();
+                workers
+                    .into_iter()
+                    .map(|w| {
+                        w.join()
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("a scan thread panicked")))
+                    })
+                    .collect()
+            });
+            let mut all = Vec::new();
+            for part in parts {
+                all.extend(part?);
+            }
+            all
+        }
+        _ => scan(&store.conn, None)?,
+    };
+    near.sort_unstable();
+    near.truncate(keep);
+    Ok(near)
+}
+
 /// Cosine matches, best first.
 fn vector(
     store: &Store,
@@ -503,25 +597,12 @@ fn vector(
     } else {
         let qcode = vecs::code(query);
         let keep = (pool * 20).max(1000);
-        let mut near: Vec<(u32, i64)> = Vec::new();
-        let mut stmt = store
-            .conn
-            .prepare(&format!("SELECT id, code FROM chunks{filter}"))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(values), |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
-        })?;
-        for row in rows {
-            let (id, code) = row?;
-            near.push((vecs::hamming(&qcode, &code), id));
-            if near.len() >= keep * 4 {
-                near.select_nth_unstable(keep);
-                near.truncate(keep);
-            }
-        }
-        if near.len() > keep {
-            near.select_nth_unstable(keep);
-            near.truncate(keep);
-        }
+        let threads = if total >= PARALLEL_SCAN_FROM {
+            std::thread::available_parallelism().map_or(1, |n| n.get().min(MAX_SCAN_THREADS))
+        } else {
+            1
+        };
+        let near = nearest_codes(store, &filter, &values, &qcode, keep, threads)?;
         let mut stmt = store
             .conn
             .prepare("SELECT scale, vec FROM chunks WHERE id = ?1")?;
@@ -673,6 +754,46 @@ mod tests {
         ),
         ("ids2.md", "# Other\n\nSomething about invoices in general."),
     ];
+
+    #[test]
+    fn the_code_scan_gives_the_same_nearest_chunks_on_any_number_of_threads() {
+        let names: Vec<String> = (0..60).map(|n| format!("doc-{n:02}.md")).collect();
+        let texts: Vec<String> = (0..60)
+            .map(|n| {
+                format!(
+                    "# Doc {n}\n\nWords about topic {} and subject {}.",
+                    n % 7,
+                    n % 11
+                )
+            })
+            .collect();
+        let files: Vec<(&str, &str)> = names
+            .iter()
+            .zip(&texts)
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        let (_dir, s) = brain(&files);
+        let qcode = vecs::code(&Fake.embed_query("topic 3 and subject 4").unwrap());
+        let scope = Filter::default().scope("", false).unwrap();
+        let (filter, values) = (
+            format!(" WHERE {}", scope.on_chunks()),
+            scope.values.clone(),
+        );
+        let one = nearest_codes(&s[0].store, "", &[], &qcode, 20, 1).unwrap();
+        assert_eq!(one.len(), 20);
+        for threads in [2, 4, 7] {
+            assert_eq!(
+                nearest_codes(&s[0].store, "", &[], &qcode, 20, threads).unwrap(),
+                one
+            );
+        }
+        // With a filter on the files too.
+        let one = nearest_codes(&s[0].store, &filter, &values, &qcode, 20, 1).unwrap();
+        assert_eq!(
+            nearest_codes(&s[0].store, &filter, &values, &qcode, 20, 4).unwrap(),
+            one
+        );
+    }
 
     #[test]
     fn terms_find_exact_words_and_odd_ids() {

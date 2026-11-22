@@ -86,7 +86,7 @@ fn words_of(question: &str) -> String {
         .join(" OR ")
 }
 
-fn p50(mut v: Vec<f64>) -> f64 {
+pub fn p50(mut v: Vec<f64>) -> f64 {
     v.sort_by(f64::total_cmp);
     v.get(v.len() / 2).copied().unwrap_or(0.0)
 }

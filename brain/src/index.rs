@@ -62,6 +62,9 @@ pub struct Report {
     /// Files left out for being too large, or unreadable, each with the reason.
     pub skipped: Vec<String>,
     pub seconds: f64,
+    /// A time budget ran out before every file was looked at: those not yet indexed are missing,
+    /// not wrong, and the next run carries on.
+    pub incomplete: bool,
 }
 
 impl Report {
@@ -76,6 +79,7 @@ impl Report {
         self.dates_refreshed += other.dates_refreshed;
         self.duplicates += other.duplicates;
         self.seconds += other.seconds;
+        self.incomplete |= other.incomplete;
         self.unconverted
             .extend(other.unconverted.iter().map(|u| Unconverted {
                 source: Some(label.to_string()),
@@ -278,6 +282,18 @@ pub fn index(
     embedder: &mut dyn Embedder,
     progress: bool,
 ) -> Result<Report> {
+    index_until(source, store, embedder, progress, None)
+}
+
+/// `index`, but once `deadline` has passed it stops after the group of chunks it is on: a brain
+/// too big for one run is then built over several, each carrying on from the index the last left.
+pub fn index_until(
+    source: &Source,
+    store: &mut Store,
+    embedder: &mut dyn Embedder,
+    progress: bool,
+    deadline: Option<Instant>,
+) -> Result<Report> {
     let started = Instant::now();
     let Walk {
         files,
@@ -454,6 +470,10 @@ pub fn index(
             if progress {
                 eprintln!("indexed {}/{} files", n + 1, files.len());
             }
+            if deadline.is_some_and(|d| Instant::now() >= d) && n + 1 < files.len() {
+                report.incomplete = true;
+                break;
+            }
         }
     }
     report.embedded_chunks += flush(store, embedder, &mut pending)?;
@@ -561,6 +581,28 @@ mod tests {
             false,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_time_budget_that_ran_out_stops_after_a_group_and_the_next_run_carries_on() {
+        let names: Vec<String> = (0..400).map(|n| format!("doc-{n:03}.md")).collect();
+        let files: Vec<(&str, &str)> = names
+            .iter()
+            .map(|n| (n.as_str(), "# A document\n\nSome words in it.\n"))
+            .collect();
+        let (brain, cache) = setup(&files);
+        let source = Source::outside("t", brain.path());
+        let mut store = Store::create(&cache.path().join("index.sqlite"), brain.path()).unwrap();
+        let past = Instant::now();
+        let first = index_until(&source, &mut store, &mut Fake, false, Some(past)).unwrap();
+        assert!(first.incomplete);
+        assert_eq!(first.embedded_chunks, GROUP);
+        assert_eq!(first.files, GROUP);
+        // Without a budget the rest is embedded, and the group already there is not.
+        let second = index(&source, &mut store, &mut Fake, false).unwrap();
+        assert!(!second.incomplete);
+        assert_eq!(second.files, 400);
+        assert_eq!(second.embedded_chunks, 400 - GROUP);
     }
 
     #[test]
