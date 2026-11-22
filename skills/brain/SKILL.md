@@ -1,6 +1,6 @@
 ---
 name: brain
-description: Search your documents (172 MB download on first use). Answers from a project's docs and the folders it lists, citing paths and dates. Use to find why something is the way it is, or what the company already knows, before asking the human or guessing. No API key, nothing else to install.
+description: Search your documents (176 MB download on first use). Answers from a project's docs and the folders it lists, citing paths and dates. Use to find why something is the way it is, or what the company already knows, before asking the human or guessing. No API key, nothing else to install.
 ---
 
 # brain
@@ -30,7 +30,7 @@ Never write into the project, or into a source's raw files. Only `brain init` wr
 
 ## Answer
 
-Run `brain init` and then `brain index`. `init` creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` in the `update: true` source if they're missing, and nothing else; with no such source it writes nothing. `index` embeds only what changed, so it takes seconds when nothing did. Its `indexed N/M files` lines are progress, not a count of failures; the last lines are the result, and any `left out` list names files it skipped. A `brain: warning` line names a listed source this machine lacks: tell the human. Then spawn a subagent to do the searching, and don't run `search` yourself, so the snippets stay out of this session (omp's `sonic` agent, which has a shell and runs on `smol`: omp's `scout` is read-only and cannot run the binary; in Claude Code a fresh subagent on `haiku`). Give it the question, the binary's path and the project's root, and these rules:
+Run `brain init` and then `brain index`. `init` creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` in the `update: true` source if they're missing, and nothing else; with no such source it writes nothing. `index` embeds only what changed, so it takes seconds when nothing did. Its `indexed N/M files` lines are progress, not a count of failures; the last lines are the result: a `not converted` list names files with no text to give (scans, images, audio, video, encrypted or corrupt files) and a `left out` list files it skipped for size, each with the reason. Mention them only if the answer may sit in one. A `brain: warning` line names a listed source this machine lacks: tell the human. Then spawn a subagent to do the searching, and don't run `search` yourself, so the snippets stay out of this session (omp's `sonic` agent, which has a shell and runs on `smol`: omp's `scout` is read-only and cannot run the binary; in Claude Code a fresh subagent on `haiku`). Give it the question, the binary's path and the project's root, and these rules:
 
 - `brain search [--terms …] [--about …] [-k N]`, run from the project's root, prints one hit per file across the project and its sources, best first: its rank, `[source]` (`project`, or the path as listed), path and heading, date and score, then the best passage. Add `--json` when you need a hit's absolute `file` to read it whole.
 - `--terms` is full-text (FTS5): words are ANDed, `OR` between alternatives, `"quotes"` for a phrase. Use it for what must match literally: an ID, a name, an error code. It matches whole words, so give a prefix (`mötuneyti*`) for languages that inflect, Icelandic above all.
