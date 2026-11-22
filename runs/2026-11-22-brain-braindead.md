@@ -58,3 +58,9 @@ Setup: two throwaway projects, each with an `AGENTS.md` listing one `update: tru
 What went wrong: the skill said `git pull --rebase`, commit, push, which git refuses with an edited file; the agent committed first. The skill now says commit, `git pull --rebase`, push. The skill does not say what to cite as "where it was decided" for an answer given at `go`; both agents wrote the answer itself, which reads right, so it was left as is.
 
 The test repo's old-model `BRAIN.md`, `decisions/` and `notes/` were removed in a commit of their own (`2a543b4`) before the runs.
+
+## The release and the brain repo's workflow
+
+- Pre-release `brain-v0.7.0` (tag on the merge of the version bump, GitHub-hosted runners): linux-x64 2m56s, linux-arm64 1m59s, macos-arm64 2m58s, macos-x64 5m04s, publish 21 s. The pins in `skills/brain/brain.json` come from its `SHA256SUMS`; the largest download is 176 317 216 bytes, so the size in the skill description and README is 176 MB.
+- The released linux-x64 binary was downloaded with `gh release download`, its sha256 matched the pin, and it answered a search on the test repo from an empty cache.
+- A subagent following the skill's "Brain repo CI" section found the test repo's workflow naming `brain-v0.6.0`, rewrote it from `brain-ci.yml` with the 0.7.0 pins (no placeholder left), committed and pushed (`ac60f16`); the workflow ran green, one `index` job of about 16 s, the `check` job being gone. Left unsaid by the skill and decided by the agent: how to tell a workflow that names another tag (it compared the tag in the download line), and the commit message.
