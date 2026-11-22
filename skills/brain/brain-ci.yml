@@ -1,8 +1,8 @@
 # Written into the brain repo as .github/workflows/brain.yml by the `brain` skill (supercharge),
-# with @TAG@, @REPO@, @ASSET@ and @SHA256@ filled from the skill's brain.json. It checks the brain on
-# every push and pull request, and on the default branch keeps one open issue while notes are stale.
-# In CI the check sees only this repo's files: a note made from a file of another source is judged
-# by the ship step and `/brain refresh`.
+# with the pinned release's tag, repo, asset and sha256 filled in from the skill's brain.json. It
+# checks the brain on every push and pull request, and on the default branch keeps one open issue
+# while notes are stale. In CI the check sees only this repo's files: a note made from a file of
+# another source is judged by the ship step and `/brain refresh`.
 name: brain
 
 on:
