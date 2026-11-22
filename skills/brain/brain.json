@@ -1,31 +1,31 @@
 {
-  "version": "0.6.0",
-  "tag": "brain-v0.6.0",
+  "version": "0.7.0",
+  "tag": "brain-v0.7.0",
   "repo": "po2studio/supercharge",
   "platforms": {
     "linux-x64": {
       "asset": "brain-linux-x64",
-      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.6.0/brain-linux-x64",
-      "sha256": "b32604c59ae5ab31521ccd8e9283ff6a4710e7f7a00cd888e041e190da27028e",
-      "bytes": 176773520
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.7.0/brain-linux-x64",
+      "sha256": "b5e367c7eced90bd76ab646da34817eedeb091461f69ba00fd80aee2ab13cf59",
+      "bytes": 176317216
     },
     "linux-arm64": {
       "asset": "brain-linux-arm64",
-      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.6.0/brain-linux-arm64",
-      "sha256": "cbcbe78c02c07637c434a041046cb1fd93ff9c6a7b874d691d77bfa54f29e0f1",
-      "bytes": 172981888
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.7.0/brain-linux-arm64",
+      "sha256": "7013ddaa1788ecdc61f296c626d2723cfd4ee8f01972a472ab0eee2035f3d13f",
+      "bytes": 172585512
     },
     "macos-arm64": {
       "asset": "brain-macos-arm64",
-      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.6.0/brain-macos-arm64",
-      "sha256": "a5e23fd9782908aa97a8bcacf9cb2f506ac7232e0cbd3de2bbbfeadbac629c0d",
-      "bytes": 170331648
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.7.0/brain-macos-arm64",
+      "sha256": "6200acde6f8280a1a51ffa85efda7012ea6cea768eee6554788d4b5602d33bc5",
+      "bytes": 169948160
     },
     "macos-x64": {
       "asset": "brain-macos-x64",
-      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.6.0/brain-macos-x64",
-      "sha256": "fafb3957659c53c9e354847dd0b7d2431de9d66d5fe7ea711f1970cfa409a87b",
-      "bytes": 173125624
+      "url": "https://github.com/po2studio/supercharge/releases/download/brain-v0.7.0/brain-macos-x64",
+      "sha256": "a744a814aaff979c7b38e5b1f26312fcac23a086a94d1c9c22f9628fd5b221aa",
+      "bytes": 172680952
     }
   }
 }
