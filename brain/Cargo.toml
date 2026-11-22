@@ -1,6 +1,6 @@
 [package]
 name = "brain"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 description = "Index and search a folder of documents on the CPU, offline"
 license = "MIT"
