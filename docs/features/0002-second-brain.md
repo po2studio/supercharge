@@ -1,6 +1,6 @@
 # 0002: Second brain: a searchable, self-maintaining knowledge base
 
-Feature issue: [#15](https://github.com/po2studio/supercharge/issues/15). Status: **planned**.
+Feature issue: [#15](https://github.com/po2studio/supercharge/issues/15). Status: **shipped**.
 
 ## Why
 Living docs say what a project is today: business, product, architecture, design, ADRs. Nothing holds the rest:
@@ -109,7 +109,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - Invocation: `brain search [--terms <fts query>] [--about <text>] [--kind] [--project] [--since] [--status] [--all] [-k N] --json`.
 - Each hit: `{id, path, title, heading, date, kind, status, stale, score, snippet, versions}`. `date` is the frontmatter date, else the file's last git commit date, else its mtime.
 - `terms` runs full-text search with BM25; `about` runs vector search. With both, the result lists are fused by rank (RRF).
-- **Trust order:** accepted decisions, then fresh notes, then raw files, then stale notes.
+- **Trust order:** accepted decisions and fresh notes are moved up one place (a decision ahead of a note on a tie), raw files keep their rank, stale notes come after every raw file, and superseded entries, shown only on request, after all of them. Strict tiers put decisions that merely resemble a question above the file that answers it (0.03–0.05 MRR on the eval); the owner kept the one-place lift (2026-11-22).
 - Superseded decisions only appear with `--all`, and point to what replaced them.
 
 **Where `supercharge` uses the brain.** Any route that asks business questions (ticket, feature, and the triage after a brainstorm) searches the brain first and cites what's settled instead of asking. After `go`, with an `update: true` source, it records each answer there as a decision whose `source` is the issue, and the feature doc's assumptions and decisions link to those files rather than repeating them; without one, the answers go in the feature doc as today. A brainstorm that ends in "not now" writes nothing, to the brain included. The direct route asks nothing, so records nothing until its ship step.
@@ -177,7 +177,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   | multilingual-e5-small | 12.5 | 16.1 |
   | bge-small-en-v1.5 (English-only) | 17.3 | 9.8 (Icelandic overflowed 512 tokens) |
 
-  Supporting other languages costs no speed at this size. EmbeddingGemma 2 (Apache 2.0, 270M text) is estimated at 3–5× slower; slice 7 decides with the full eval.
+  Supporting other languages costs no speed at this size. Slice 7 measured EmbeddingGemma 2 (Apache 2.0, 256 dimensions) on the full eval and kept e5: hybrid recall@5 0.917 → 0.911, indexing about 7× slower, the binary 2.2× bigger ([runs/2026-11-22-brain-model-choice.md](../../runs/2026-11-22-brain-model-choice.md)).
 - **Brute force, no approximate-nearest-neighbour index.** 50k × 256-dim cosine took 14 ms even in JS. A 1-bit first pass plus int8 rescoring covers the 1M wall without a graph to build or keep in memory.
 - **Distribution:** the skills CLI (vercel-labs/skills) copies the whole skill folder and has no install hook. It shows only the `description` (as a hint cut at 57 characters, and in full in a panel), so that's where the size goes, and first-run setup repeats it before downloading.
 - **The PR check runs in skills, not in project CI.** Project CI would need a token for the brain repo. `build-slice` runs `brain check --changed` before opening its PR, and the brain repo's own CI runs `brain check`.
@@ -195,6 +195,10 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   - a flat folder with no structure works as a source.
   
   This replaces the global path (`~/.config/supercharge/brain`) and the location question from 2026-11-12; slice 1b reworks what slice 1 shipped.
+- **Owner, 2026-11-22** (while building):
+  - binaries are built on GitHub-hosted runners only, macOS included;
+  - the scale measurements of slice 6 (1M chunks, a 100k-document brain) run on the owner's Apple Silicon MacBook, not the shared build machine; results in [runs/2026-11-22-brain-shared-index.md](../../runs/2026-11-22-brain-shared-index.md);
+  - slice 5 also commits every agent-owned file `brain init` creates (`BRAIN.md` stayed untracked) and lets the eval accept a fresh note as a right answer.
 
 ## Slices
 1 first, then 1b. Then 2 and 3 together. 4 after 3. 5 after 4. 6 after 5. 7 last, once the corpus is complete. (The bundle ticket [#49](https://github.com/po2studio/supercharge/issues/49) that 1, 3 and 5 build on has shipped.)

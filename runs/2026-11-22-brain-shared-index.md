@@ -68,6 +68,23 @@ brain/scripts/scale.sh ~/brain-bench/brain-macos-arm64 1000 100000           # A
 
 `scale.sh` with 100 000 documents prints two times: the CI's build from scratch (it embeds every document once, so hours on a laptop) and a fresh machine's first index from the shared one it made (the number the criterion is about). Both go in the PR. A pass is search p50 at most 500 ms on the `search p50 hybrid` line of the first command at 1 000 000 chunks, at least 12 chunks/s on its `indexing` line, and the second command's fresh-machine line in minutes. Until those are in the PR, the two criteria stay open.
 
+### The owner's Mac run
+
+On the owner's MacBook (Apple Silicon, Darwin arm64, 12 cores), `brain` 0.6.0 from the `brain-macos-arm64` release asset, 2026-11-22.
+
+**AC 5: passes.** `bench --chunks 1000000`: 1 000 000 chunks in 125 000 files (5.2 GB), stored in 121 s, 12 threads.
+
+| at 1 000 000 chunks | measured | target |
+|---|---|---|
+| search p50, hybrid | 179 ms | ≤ 500 ms |
+| search p50, terms / about | 10 ms / 160 ms (3 ms of it embeds the question) | |
+| `brain search` from the command line | 558 ms (mostly loading the model) | |
+| indexing with the model | 32.6 chunks/s | ≥ 12 chunks/s |
+
+The criterion names a 6-core CPU and this one has 12; the 1-bit scan uses at most 8 threads, so on 6 cores the hybrid p50 should be about 240 to 300 ms (an estimate, not measured).
+
+**AC 4:** `scale.sh … 1000 100000` was still building the 100 000-document brain when this was written; its fresh-machine line goes in the feature's PR into `main`.
+
 ## What went wrong
 
 - **My first bench of the 1-bit path was a copy of the code.** It showed up only because the bench takes a lower `--exact-limit` to reach that path on a small brain; at 1 000 000 chunks it would have cost over a second.
