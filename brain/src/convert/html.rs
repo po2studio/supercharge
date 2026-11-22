@@ -278,6 +278,7 @@ pub fn to_text(html: &str) -> Converted {
         title: title.filter(|t| !t.is_empty()),
         date,
         prose: true,
+        meta: Default::default(),
     }
 }
 

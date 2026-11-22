@@ -79,6 +79,7 @@ fn extract(bytes: &[u8]) -> Result<Converted, String> {
             .or_else(|| get(b"CreationDate"))
             .and_then(|d| pdf_date(&d)),
         prose: true,
+        meta: Default::default(),
     })
 }
 

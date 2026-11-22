@@ -510,3 +510,126 @@ fn inside_a_project_with_no_flags_the_docs_and_the_listed_sources_are_searched()
     assert!(at("brain/BRAIN.md").is_file() && at("brain/decisions").is_dir());
     assert!(!at("policies/BRAIN.md").exists() && !at("repo/decisions").exists());
 }
+
+/// What is decided stays found, with its status: inside a project, a decision superseded in the
+/// `update: true` source and an ADR superseded or amended in the project's docs are searched
+/// where they are. The old ones come back only with `--all`, pointing to what replaced them, and
+/// nothing is written to the project.
+#[test]
+fn a_superseded_decision_never_comes_back_as_current_and_an_amended_adr_brings_its_amendments() {
+    let dir = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+    let write = |p: &str, t: &str| {
+        let full = dir.path().join(p);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(full, t).unwrap();
+    };
+    write(
+        "repo/AGENTS.md",
+        "# AGENTS.md\n\n## Supercharge\n\n```yaml\ndocs: docs\nbrain:\n  - path: ../brain\n    update: true\n```\n",
+    );
+    write(
+        "repo/docs/BUSINESS.md",
+        "# Business\n\nSelkie is sold to bookkeepers, who are the paying customer.\n",
+    );
+    write("repo/docs/adr/0001-weekly.md", "# 0001: Invoices go out weekly\n\nStatus: superseded by [0003](0003-daily.md)\n\nInvoices are batched weekly.\n");
+    write("repo/docs/adr/0002-currency.md", "# 0002: Currencies\n\nStatus: accepted; amended by [0004](0004-nok.md)\n\nAmounts are stored in ISK and EUR.\n");
+    write(
+        "repo/docs/adr/0003-daily.md",
+        "# 0003: Invoices go out daily\n\nStatus: accepted\n\nInvoices are batched daily.\n",
+    );
+    write(
+        "repo/docs/adr/0004-nok.md",
+        "# 0004: NOK too\n\nStatus: accepted\n\nNorwegian krone amounts are stored as well.\n",
+    );
+    write(
+        "brain/decisions/2023-11-02-single-phone.md",
+        "---\ntitle: One phone number\ndate: 2023-11-02\nkind: product\nstatus: superseded\nsuperseded-by: 2026-01-10-sms-fallback\n---\nSignup asks for one phone number.\n",
+    );
+    write(
+        "brain/decisions/2026-01-10-sms-fallback.md",
+        "---\ntitle: A second phone number\ndate: 2026-01-10\nkind: product\nstatus: accepted\nsupersedes: [2023-11-02-single-phone]\n---\nSignup asks for a second phone number, an SMS fallback.\n",
+    );
+    let repo = dir.path().join("repo");
+    let run = |args: &[&str]| -> Vec<Value> {
+        let out = Command::new(env!("CARGO_BIN_EXE_brain"))
+            .current_dir(&repo)
+            .env_clear()
+            .env("SUPERCHARGE_CACHE_DIR", cache.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        serde_json::from_str::<Value>(&text)
+            .unwrap_or(Value::Null)
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    };
+    let before = snapshot(&repo);
+    run(&["index"]);
+    let paths = |hits: &[Value]| -> Vec<String> {
+        hits.iter()
+            .map(|h| h["path"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let search = |extra: &[&str]| {
+        let mut args = vec!["search", "--json", "-k", "10"];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+
+    let phone = paths(&search(&["--terms", "phone number"]));
+    assert_eq!(phone, ["decisions/2026-01-10-sms-fallback.md"]);
+    let all = search(&["--terms", "phone number", "--all"]);
+    let old = all
+        .iter()
+        .find(|h| h["path"] == "decisions/2023-11-02-single-phone.md")
+        .unwrap();
+    assert_eq!(old["status"], "superseded");
+    assert_eq!(old["superseded_by"], "decisions/2026-01-10-sms-fallback.md");
+    assert_eq!(old["kind"], "product");
+
+    let batch = paths(&search(&["--terms", "invoices batched"]));
+    assert!(
+        batch.contains(&"docs/adr/0003-daily.md".to_string()),
+        "{batch:?}"
+    );
+    assert!(
+        !batch.contains(&"docs/adr/0001-weekly.md".to_string()),
+        "{batch:?}"
+    );
+    let adr = search(&["--terms", "invoices batched", "--all"]);
+    let weekly = adr
+        .iter()
+        .find(|h| h["path"] == "docs/adr/0001-weekly.md")
+        .unwrap();
+    assert_eq!(weekly["superseded_by"], "docs/adr/0003-daily.md");
+
+    let amended = run(&["search", "--json", "--terms", "ISK EUR", "-k", "1"]);
+    assert_eq!(
+        paths(&amended),
+        ["docs/adr/0002-currency.md", "docs/adr/0004-nok.md"]
+    );
+    assert_eq!(
+        paths(&search(&["--terms", "bookkeepers"]))[0],
+        "docs/BUSINESS.md"
+    );
+    assert_eq!(
+        paths(&search(&[
+            "--terms",
+            "phone number",
+            "--kind",
+            "product",
+            "--since",
+            "2025-01-01"
+        ])),
+        phone
+    );
+    assert_eq!(before, snapshot(&repo), "nothing in the project is written");
+}

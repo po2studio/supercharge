@@ -14,7 +14,7 @@ use std::{
 use crate::{
     chunk::{self, Params},
     convert::{self, Format, Outcome},
-    dedup, doc,
+    decisions, dedup, doc,
     embed::Embedder,
     sources::{Kind, Source, PROJECT_FILES},
     store::{self, FileRow, NewChunk, NewFile, Store},
@@ -396,6 +396,7 @@ pub fn index(
                 .file_stem()
                 .map_or(rel.clone(), |s| s.to_string_lossy().into_owned())
         });
+        let (kind, meta) = entry_of(source, rel, &converted);
         let count = |s: &str| embedder.count_tokens(s);
         let chunks = chunk::chunk(
             &converted.text,
@@ -428,12 +429,8 @@ pub fn index(
                 title,
                 date,
                 own_date: converted.date.clone(),
-                kind: if source.is_project() {
-                    "raw"
-                } else {
-                    doc::kind_of(rel)
-                }
-                .to_string(),
+                kind,
+                meta,
                 simhash: dedup::simhash(&converted.text),
                 chunks: new_chunks,
             },
@@ -455,6 +452,7 @@ pub fn index(
     // Of files that are copies of each other only the newest ranks; dates may have moved.
     let copies = dedup::copies(&store.dedup_items()?);
     store.set_copies(&copies)?;
+    decisions::resolve(store)?;
 
     skipped.sort();
     unconverted.sort_by(|a, b| a.path.cmp(&b.path));
@@ -468,6 +466,28 @@ pub fn index(
     report.seconds = started.elapsed().as_secs_f64();
     store.set_meta("last_index", &serde_json::to_string(&report)?)?;
     Ok(report)
+}
+
+/// What a file is, and what it says about being decided or replaced. Only the files of
+/// `decisions/` and a project's ADRs carry that; a status in any other file is just text.
+fn entry_of(source: &Source, rel: &str, converted: &convert::Converted) -> (String, doc::Meta) {
+    match &source.kind {
+        Kind::Project { docs } if doc::is_adr(rel, docs) => {
+            let mut meta = doc::adr_status(&converted.text);
+            meta.project = None;
+            ("adr".into(), meta)
+        }
+        Kind::Project { .. } => ("raw".into(), doc::Meta::default()),
+        Kind::Outside => {
+            let kind = doc::kind_of(rel, &converted.meta);
+            let meta = if kind == "note" || kind == "raw" {
+                doc::Meta::default()
+            } else {
+                converted.meta.clone()
+            };
+            (kind, meta)
+        }
+    }
 }
 
 fn flush(
@@ -719,6 +739,76 @@ mod tests {
         let (title, date, kind) = row("plain.txt");
         assert_eq!((title.as_str(), kind.as_str()), ("plain", "raw"));
         assert_eq!(date.len(), 10);
+    }
+
+    #[test]
+    fn only_decisions_and_adrs_carry_a_status_and_a_decisions_kind_comes_from_its_frontmatter() {
+        let status = |store: &Store, p: &str| -> (String, String, String) {
+            store
+                .conn
+                .query_row(
+                    "SELECT kind, status, superseded_by FROM files WHERE path = ?1",
+                    [p],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap()
+        };
+        let front = "---\nkind: process\nstatus: superseded\nsuperseded-by: later\n---\nx";
+        let (brain, cache) = setup(&[
+            ("decisions/2024-01-01-a.md", front),
+            ("decisions/2024-01-02-b.md", "no frontmatter"),
+            ("notes/n.md", front),
+            ("policy.md", front),
+        ]);
+        run(&brain, &cache);
+        let store = Store::open(&cache.path().join("index.sqlite"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            status(&store, "decisions/2024-01-01-a.md"),
+            ("process".into(), "superseded".into(), "later".into())
+        );
+        assert_eq!(
+            status(&store, "decisions/2024-01-02-b.md"),
+            ("decision".into(), "".into(), "".into())
+        );
+        assert_eq!(
+            status(&store, "notes/n.md"),
+            ("note".into(), "".into(), "".into())
+        );
+        assert_eq!(
+            status(&store, "policy.md"),
+            ("raw".into(), "".into(), "".into())
+        );
+
+        // A project's ADRs read their status line; its other docs say nothing.
+        let (dir, cache) = setup(&[
+            (
+                "docs/adr/0001-a.md",
+                "# 0001\n\nStatus: superseded by 0002\n",
+            ),
+            ("docs/adr/0002-b.md", "# 0002\n\nStatus: accepted\n"),
+            (
+                "docs/PRODUCT.md",
+                "# Product\n\nStatus: superseded by 0002\n",
+            ),
+        ]);
+        let source = project(&dir, "docs");
+        let mut store = Store::create(&cache.path().join("index.sqlite"), dir.path()).unwrap();
+        index(&source, &mut store, &mut Fake, false).unwrap();
+        assert_eq!(
+            status(&store, "docs/adr/0001-a.md"),
+            (
+                "adr".into(),
+                "superseded".into(),
+                "docs/adr/0002-b.md".into()
+            )
+        );
+        assert_eq!(status(&store, "docs/adr/0002-b.md").1, "accepted");
+        assert_eq!(
+            status(&store, "docs/PRODUCT.md"),
+            ("raw".into(), "".into(), "".into())
+        );
     }
 
     #[test]

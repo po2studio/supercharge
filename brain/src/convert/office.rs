@@ -282,6 +282,7 @@ pub fn docx(bytes: &[u8]) -> Result<Converted, String> {
         title: title.or(first),
         date,
         prose: true,
+        meta: Default::default(),
     })
 }
 
@@ -386,6 +387,7 @@ pub fn pptx(bytes: &[u8]) -> Result<Converted, String> {
         title: title.or(deck_title),
         date,
         prose: true,
+        meta: Default::default(),
     })
 }
 
@@ -471,6 +473,7 @@ pub fn odf(bytes: &[u8]) -> Result<Converted, String> {
         title: title.or(first),
         date,
         prose: true,
+        meta: Default::default(),
     })
 }
 

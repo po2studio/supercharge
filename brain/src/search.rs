@@ -2,10 +2,11 @@
 //! index of each source a project reads.
 
 use anyhow::{bail, Context, Result};
+use rusqlite::{types::Value, OptionalExtension};
 use serde::Serialize;
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{embed::Embedder, sources::Source, store, store::Store, vecs};
+use crate::{doc, embed::Embedder, sources, sources::Source, store, store::Store, vecs};
 
 /// The reciprocal-rank-fusion constant.
 const RRF_K: f64 = 60.0;
@@ -27,8 +28,20 @@ pub struct Hit {
     pub title: String,
     pub heading: String,
     pub date: String,
+    /// `business`, `product`, `process` or `decision` for a decision, `adr` for a project's ADR,
+    /// `note`, else `raw`.
     pub kind: String,
+    /// `proposed`, `accepted` or `superseded` for a decision or ADR, else none.
     pub status: Option<String>,
+    /// The decision's project, when its frontmatter names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// For a superseded decision or ADR: what replaced it (a path in the same source, else as written).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
+    /// For an amended ADR: the ADRs that amend it, which come with it in the results.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub amended_by: Vec<String>,
     pub stale: bool,
     pub score: f64,
     pub versions: Vec<String>,
@@ -41,10 +54,139 @@ pub struct Query<'a> {
     pub k: usize,
 }
 
+/// What a search leaves out. Superseded decisions and ADRs are left out unless `all`, or unless
+/// `status` asks for them.
+#[derive(Debug, Default)]
+pub struct Filter<'a> {
+    /// One of `KINDS`; `decision` is every kind of decision, ADRs included.
+    pub kind: Option<&'a str>,
+    /// A decision's `project`; a project's own docs count as that project's.
+    pub project: Option<&'a str>,
+    /// `YYYY-MM-DD`: only entries dated then or later.
+    pub since: Option<&'a str>,
+    /// `proposed`, `accepted` or `superseded`.
+    pub status: Option<&'a str>,
+    pub all: bool,
+}
+
+pub const KINDS: [&str; 7] = [
+    "decision", "business", "product", "process", "adr", "note", "raw",
+];
+const DECISION_KINDS: [&str; 5] = ["business", "product", "process", "decision", "adr"];
+const STATUSES: [&str; 3] = ["proposed", "accepted", "superseded"];
+
+impl Filter<'_> {
+    fn check(&self) -> Result<()> {
+        if let Some(k) = self.kind.filter(|k| !KINDS.contains(k)) {
+            bail!("--kind {k:?} is none of decision, business, product, process, adr, note, raw");
+        }
+        if let Some(s) = self.status.filter(|s| !STATUSES.contains(s)) {
+            bail!("--status {s:?} is none of proposed, accepted, superseded");
+        }
+        if let Some(d) = self
+            .since
+            .filter(|d| doc::valid_date(d).is_none_or(|v| v != *d))
+        {
+            bail!("--since {d:?} is not a date like 2025-03-01");
+        }
+        Ok(())
+    }
+
+    fn hides_superseded(&self) -> bool {
+        !self.all && self.status != Some("superseded")
+    }
+
+    /// Which of a source's files may be hit, or none when every file may. `project_default` is
+    /// the project a file of the project's own docs counts as.
+    fn scope(&self, project_default: &str, is_project: bool) -> Option<Scope> {
+        let mut conds: Vec<String> = Vec::new();
+        let mut values: Vec<Value> = Vec::new();
+        let text = |s: &str| Value::Text(s.to_string());
+        if let Some(kind) = self.kind {
+            let kinds: Vec<&str> = if kind == "decision" {
+                DECISION_KINDS.to_vec()
+            } else {
+                vec![kind]
+            };
+            conds.push(format!("kind IN ({})", vec!["?"; kinds.len()].join(", ")));
+            values.extend(kinds.into_iter().map(text));
+        }
+        if let Some(project) = self.project {
+            if is_project {
+                conds.push("COALESCE(NULLIF(project, ''), ?) = ?".into());
+                values.push(text(project_default));
+            } else {
+                conds.push("project = ?".into());
+            }
+            values.push(text(project));
+        }
+        if let Some(since) = self.since {
+            conds.push("date >= ?".into());
+            values.push(text(since));
+        }
+        if let Some(status) = self.status {
+            conds.push("status = ?".into());
+            values.push(text(status));
+        }
+        if self.hides_superseded() {
+            if conds.is_empty() {
+                return Some(Scope {
+                    except: true,
+                    cond: "status = 'superseded'".into(),
+                    values,
+                });
+            }
+            conds.push("status != 'superseded'".into());
+        }
+        (!conds.is_empty()).then(|| Scope {
+            except: false,
+            cond: conds.join(" AND "),
+            values,
+        })
+    }
+}
+
+/// The files of one source a search may hit, as SQL over `files`. With nothing but the
+/// superseded left out, `except` is set and `cond` names those few, not all the others.
+struct Scope {
+    except: bool,
+    cond: String,
+    values: Vec<Value>,
+}
+
+impl Scope {
+    fn not(&self) -> &'static str {
+        if self.except {
+            "NOT "
+        } else {
+            ""
+        }
+    }
+
+    /// For a query over `chunks`.
+    fn on_chunks(&self) -> String {
+        format!(
+            "file_id {}IN (SELECT id FROM files WHERE {})",
+            self.not(),
+            self.cond
+        )
+    }
+
+    /// For a query over `fts`, whose rowids are chunk ids.
+    fn on_fts(&self) -> String {
+        format!(
+            "rowid {}IN (SELECT id FROM chunks WHERE file_id IN (SELECT id FROM files WHERE {}))",
+            self.not(),
+            self.cond
+        )
+    }
+}
+
 /// A source's index, open for reading.
 pub struct Opened {
     pub label: String,
     pub root: PathBuf,
+    is_project: bool,
     tag: String,
     pub store: Store,
 }
@@ -54,6 +196,7 @@ impl Opened {
         Opened {
             label: source.label.clone(),
             root: source.root.clone(),
+            is_project: source.is_project(),
             tag: store::key_hash(&source.key())[..8].to_string(),
             store,
         }
@@ -63,31 +206,71 @@ impl Opened {
 /// A chunk in one of the opened sources: its position in the list, and its row.
 type Key = (usize, i64);
 
+/// Hybrid search with nothing filtered out but the superseded.
 pub fn search(
     sources: &[Opened],
     embedder: &mut dyn Embedder,
     q: &Query,
     exact_limit: usize,
 ) -> Result<Vec<Hit>> {
+    search_filtered(sources, embedder, q, &Filter::default(), exact_limit)
+}
+
+/// An accepted decision ranks one place above where relevance puts it, and above a hit it ties
+/// with; superseded ones, shown only on request, go last. More than one place puts decisions that
+/// merely resemble a question above the file that answers it: two cost 0.03 MRR on the eval.
+/// Notes join the order with slice 4.
+const DECISION_LIFT: usize = 1;
+
+pub fn search_filtered(
+    sources: &[Opened],
+    embedder: &mut dyn Embedder,
+    q: &Query,
+    filter: &Filter,
+    exact_limit: usize,
+) -> Result<Vec<Hit>> {
     if q.terms.is_none() && q.about.is_none() {
         bail!("give --terms, --about, or both");
     }
+    filter.check()?;
+    let project_default = match filter.project {
+        Some(_) => sources
+            .iter()
+            .find(|s| s.is_project)
+            .map(|s| sources::project_name(&s.root))
+            .unwrap_or_default(),
+        None => String::new(),
+    };
+    let scopes: Vec<Option<Scope>> = sources
+        .iter()
+        .map(|s| filter.scope(&project_default, s.is_project))
+        .collect();
     let query_vector = q.about.map(|t| embedder.embed_query(t)).transpose()?;
     // One hit per file, its best chunk. A file with many matching chunks can fill the candidate
-    // pool on its own, so the pool grows until it yields `k` files or holds every match.
+    // pool on its own, so the pool grows until it yields enough files or holds every match.
+    // Candidates for the top `k`: those a lift can bring in.
+    let window = q.k + DECISION_LIFT;
     let mut pool = (q.k * 10).max(50);
     loop {
         let mut exhausted = true;
         let by_terms = match q.terms {
-            Some(t) => Some(merge(sources, pool, &mut exhausted, |s| {
-                fts(&s.store, t, pool)
-            })?),
+            Some(t) => Some(merge(
+                sources,
+                &scopes,
+                pool,
+                &mut exhausted,
+                |s, scope| fts(&s.store, scope, t, pool),
+            )?),
             None => None,
         };
         let by_about = match &query_vector {
-            Some(v) => Some(merge(sources, pool, &mut exhausted, |s| {
-                vector(&s.store, v, pool, exact_limit)
-            })?),
+            Some(v) => Some(merge(
+                sources,
+                &scopes,
+                pool,
+                &mut exhausted,
+                |s, scope| vector(&s.store, scope, v, pool, exact_limit),
+            )?),
             None => None,
         };
         let ranked: Vec<(Key, f64)> = match (by_terms, by_about) {
@@ -95,7 +278,10 @@ pub fn search(
             (Some(l), None) | (None, Some(l)) => l,
             (None, None) => unreachable!(),
         };
-        let mut hits: Vec<Hit> = Vec::new();
+        let mut hits: Vec<(usize, Hit)> = Vec::new();
+        // Superseded hits (with `--all`) go last, so they don't count towards the window, unless
+        // they are what was asked for.
+        let mut current = 0;
         let mut seen: std::collections::HashSet<(usize, String)> = Default::default();
         for ((n, id), score) in ranked {
             // A file that has a newer copy never ranks: the copy does, and lists it.
@@ -105,17 +291,75 @@ pub fn search(
             // One hit per file of a source; the label is for people, so two sources are told
             // apart by position, not by name.
             if seen.insert((n, hit.path.clone())) {
-                hits.push(hit);
+                current += usize::from(
+                    hit.status.as_deref() != Some("superseded")
+                        || filter.status == Some("superseded"),
+                );
+                hits.push((n, hit));
             }
-            if hits.len() == q.k {
+            if current == window {
                 break;
             }
         }
-        if hits.len() == q.k || exhausted {
-            return Ok(hits);
+        if current == window || exhausted {
+            return trusted(sources, hits, q.k, filter);
         }
         pool *= 4;
     }
+}
+
+fn is_accepted_decision(h: &Hit) -> bool {
+    h.status.as_deref() == Some("accepted") && DECISION_KINDS.contains(&h.kind.as_str())
+}
+
+/// The best `k` of the hits (most relevant first) by the trust order; each amended ADR is
+/// followed by the ADRs that amend it, and theirs in turn, if they weren't hit already.
+fn trusted(
+    sources: &[Opened],
+    hits: Vec<(usize, Hit)>,
+    k: usize,
+    filter: &Filter,
+) -> Result<Vec<Hit>> {
+    let mut ordered: Vec<_> = hits
+        .into_iter()
+        .enumerate()
+        .map(|(rank, hit)| {
+            let key = if hit.1.status.as_deref() == Some("superseded") {
+                (usize::MAX, 0, rank)
+            } else if is_accepted_decision(&hit.1) {
+                (rank.saturating_sub(DECISION_LIFT), 0, rank)
+            } else {
+                (rank, 1, rank)
+            };
+            (key, hit)
+        })
+        .collect();
+    ordered.sort_by_key(|(key, _)| *key);
+    ordered.truncate(k);
+    let hits: Vec<(usize, Hit)> = ordered.into_iter().map(|(_, h)| h).collect();
+    let mut seen: std::collections::HashSet<(usize, String)> =
+        hits.iter().map(|(n, h)| (*n, h.path.clone())).collect();
+    let mut out = Vec::new();
+    for (n, hit) in hits {
+        let mut queue: std::collections::VecDeque<String> =
+            hit.amended_by.iter().cloned().collect();
+        let score = hit.score;
+        out.push(hit);
+        // An amendment can be amended in turn; `seen` also stops a cycle.
+        while let Some(path) = queue.pop_front() {
+            if !seen.insert((n, path.clone())) {
+                continue;
+            }
+            if let Some(extra) = file_hit(&sources[n], &path, score)? {
+                if extra.status.as_deref() == Some("superseded") && filter.hides_superseded() {
+                    continue;
+                }
+                queue.extend(extra.amended_by.iter().cloned());
+                out.push(extra);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Each source's best `pool` matches by `one`, as one list by score: cosine is the same measure
@@ -123,13 +367,14 @@ pub fn search(
 /// `exhausted` goes false when some source had more matches than it returned.
 fn merge(
     sources: &[Opened],
+    scopes: &[Option<Scope>],
     pool: usize,
     exhausted: &mut bool,
-    one: impl Fn(&Opened) -> Result<Vec<(i64, f64)>>,
+    one: impl Fn(&Opened, &Option<Scope>) -> Result<Vec<(i64, f64)>>,
 ) -> Result<Vec<(Key, f64)>> {
     let mut all: Vec<(Key, f64)> = Vec::new();
     for (n, source) in sources.iter().enumerate() {
-        let list = one(source)?;
+        let list = one(source, &scopes[n])?;
         if list.len() >= pool {
             *exhausted = false;
         }
@@ -158,22 +403,34 @@ fn fuse(lists: &[Vec<(Key, f64)>]) -> Vec<(Key, f64)> {
 
 /// Full-text matches, best first, with `-bm25` as the score. The query is FTS5 syntax; when it
 /// isn't valid (an ID like `INV-2024-0042` isn't), every word is taken literally.
-fn fts(store: &Store, terms: &str, pool: usize) -> Result<Vec<(i64, f64)>> {
+fn fts(store: &Store, scope: &Option<Scope>, terms: &str, pool: usize) -> Result<Vec<(i64, f64)>> {
     if terms.trim().is_empty() {
         bail!("--terms is empty");
     }
-    match fts_query(store, terms, pool) {
+    match fts_query(store, scope, terms, pool) {
         Ok(rows) => Ok(rows),
-        Err(_) => fts_query(store, &quote_words(terms), pool)
+        Err(_) => fts_query(store, scope, &quote_words(terms), pool)
             .with_context(|| format!("cannot search for {terms:?}")),
     }
 }
 
-fn fts_query(store: &Store, query: &str, pool: usize) -> rusqlite::Result<Vec<(i64, f64)>> {
-    let mut stmt = store.conn.prepare(
-        "SELECT rowid, -bm25(fts) FROM fts WHERE fts MATCH ?1 ORDER BY bm25(fts) LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![query, pool as i64], |r| {
+fn fts_query(
+    store: &Store,
+    scope: &Option<Scope>,
+    query: &str,
+    pool: usize,
+) -> rusqlite::Result<Vec<(i64, f64)>> {
+    let (clause, values) = match scope {
+        None => (String::new(), Vec::new()),
+        Some(s) => (format!(" AND {}", s.on_fts()), s.values.clone()),
+    };
+    let mut stmt = store.conn.prepare(&format!(
+        "SELECT rowid, -bm25(fts) FROM fts WHERE fts MATCH ?{clause} ORDER BY bm25(fts) LIMIT ?"
+    ))?;
+    let mut bound = vec![Value::Text(query.to_string())];
+    bound.extend(values);
+    bound.push(Value::Integer(pool as i64));
+    let rows = stmt.query_map(rusqlite::params_from_iter(bound), |r| {
         Ok((r.get(0)?, r.get(1)?))
     })?;
     rows.collect()
@@ -197,15 +454,22 @@ fn quote_words(terms: &str) -> String {
 /// Cosine matches, best first.
 fn vector(
     store: &Store,
+    scope: &Option<Scope>,
     query: &[f32],
     pool: usize,
     exact_limit: usize,
 ) -> Result<Vec<(i64, f64)>> {
     let total = store.counts()?.1 as usize;
     let mut scored: Vec<(i64, f64)> = Vec::new();
+    let (filter, values) = match scope {
+        None => (String::new(), Vec::new()),
+        Some(s) => (format!(" WHERE {}", s.on_chunks()), s.values.clone()),
+    };
     if total <= exact_limit {
-        let mut stmt = store.conn.prepare("SELECT id, scale, vec FROM chunks")?;
-        let rows = stmt.query_map([], |r| {
+        let mut stmt = store
+            .conn
+            .prepare(&format!("SELECT id, scale, vec FROM chunks{filter}"))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(values), |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, f32>(1)?,
@@ -223,8 +487,12 @@ fn vector(
         let qcode = vecs::code(query);
         let keep = (pool * 20).max(1000);
         let mut near: Vec<(u32, i64)> = Vec::new();
-        let mut stmt = store.conn.prepare("SELECT id, code FROM chunks")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+        let mut stmt = store
+            .conn
+            .prepare(&format!("SELECT id, code FROM chunks{filter}"))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(values), |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
         for row in rows {
             let (id, code) = row?;
             near.push((vecs::hamming(&qcode, &code), id));
@@ -257,45 +525,68 @@ fn vector(
 /// The hit for a chunk, or `None` when its file has a newer copy. The newest copy of a file lists
 /// the older ones in `versions`, newest first.
 fn chunk_hit(source: &Opened, id: i64, score: f64) -> Result<Option<Hit>> {
-    let mut hit = source.store.conn.query_row(
-        "SELECT f.path, f.title, c.heading, f.date, f.kind, c.text, \
+    let (hidden, mut hit) = source.store.conn.query_row(
+        "SELECT f.path, f.title, c.heading, f.date, f.kind, c.text, f.project, f.status, f.superseded_by, f.amended_by, \
          EXISTS(SELECT 1 FROM files n WHERE n.path = f.dup_of) \
          FROM chunks c JOIN files f ON f.id = c.file_id WHERE c.id = ?1",
         [id],
         |r| {
             let path: String = r.get(0)?;
-            let hidden: bool = r.get(6)?;
-            Ok((
-                hidden,
-                Hit {
-                    id: format!("{}-{id}", source.tag),
-                    source: source.label.clone(),
-                    file: source.root.join(&path).to_string_lossy().into_owned(),
-                    path,
-                    title: r.get(1)?,
-                    heading: r.get(2)?,
-                    date: r.get(3)?,
-                    kind: r.get(4)?,
-                    status: None,
-                    stale: false,
-                    score,
-                    snippet: snippet(&r.get::<_, String>(5)?),
-                    versions: Vec::new(),
-                },
-            ))
+            let some = |s: String| (!s.is_empty()).then_some(s);
+            Ok((r.get::<_, bool>(10)?, Hit {
+                id: format!("{}-{id}", source.tag),
+                source: source.label.clone(),
+                file: source.root.join(&path).to_string_lossy().into_owned(),
+                path,
+                title: r.get(1)?,
+                heading: r.get(2)?,
+                date: r.get(3)?,
+                kind: r.get(4)?,
+                status: some(r.get(7)?),
+                project: some(r.get(6)?),
+                superseded_by: some(r.get(8)?),
+                amended_by: r
+                    .get::<_, String>(9)?
+                    .split('\n')
+                    .filter(|p| !p.is_empty())
+                    .map(String::from)
+                    .collect(),
+                stale: false,
+                score,
+                snippet: snippet(&r.get::<_, String>(5)?),
+                versions: Vec::new(),
+            }))
         },
     )?;
-    if hit.0 {
+    if hidden {
         return Ok(None);
     }
     let mut stmt = source
         .store
         .conn
         .prepare("SELECT path FROM files WHERE dup_of = ?1 ORDER BY date DESC, path DESC")?;
-    hit.1.versions = stmt
-        .query_map([&hit.1.path], |r| r.get(0))?
+    hit.versions = stmt
+        .query_map([&hit.path], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
-    Ok(Some(hit.1))
+    Ok(Some(hit))
+}
+
+/// A file's first chunk as a hit, for a file that comes along with another; none if it isn't
+/// indexed.
+fn file_hit(source: &Opened, path: &str, score: f64) -> Result<Option<Hit>> {
+    let id: Option<i64> = source
+        .store
+        .conn
+        .query_row(
+            "SELECT c.id FROM chunks c JOIN files f ON f.id = c.file_id WHERE f.path = ?1 ORDER BY c.ord LIMIT 1",
+            [path],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match id {
+        Some(id) => chunk_hit(source, id, score),
+        None => Ok(None),
+    }
 }
 
 /// Breaks `text` at spaces into lines of at most `width` characters (a longer word gets its own line).
@@ -462,7 +753,7 @@ mod tests {
             k: 3,
         };
         // The long file's 80 chunks all rank above the others', and fill the first pool of 50.
-        let first = fts(&s[0].store, "banana", 50).unwrap();
+        let first = fts(&s[0].store, &None, "banana", 50).unwrap();
         let in_big = |id: i64| chunk_hit(&s[0], id, 0.0).unwrap().unwrap().path == "big.md";
         assert!(first.iter().all(|(id, _)| in_big(*id)));
         let hits = search(&s, &mut Fake, &q, EXACT_LIMIT).unwrap();
@@ -477,6 +768,7 @@ mod tests {
         };
         let first = vector(
             &s[0].store,
+            &None,
             &Fake.embed_query("banana").unwrap(),
             50,
             EXACT_LIMIT,
@@ -675,6 +967,438 @@ mod tests {
             EXACT_LIMIT
         )
         .is_err());
+    }
+
+    fn decision(title: &str, date: &str, kind: &str, extra: &str, body: &str) -> String {
+        format!("---\ntitle: {title}\ndate: {date}\nkind: {kind}\n{extra}---\n{body}\n")
+    }
+
+    fn found(sources: &[Opened], terms: &str, k: usize, filter: &Filter) -> Vec<Hit> {
+        let q = Query {
+            terms: Some(terms),
+            about: None,
+            k,
+        };
+        search_filtered(sources, &mut Fake, &q, filter, EXACT_LIMIT).unwrap()
+    }
+
+    /// An outside source with `a` replaced by `b`, an unrelated proposal and a raw file.
+    fn rules() -> (TempDir, Vec<Opened>) {
+        brain(&[
+            (
+                "decisions/2023-01-01-a.md",
+                &decision(
+                    "A",
+                    "2023-01-01",
+                    "product",
+                    "status: superseded\nsuperseded-by: 2024-01-01-b\n",
+                    "Fax is the contact channel.",
+                ),
+            ),
+            (
+                "decisions/2024-01-01-b.md",
+                &decision(
+                    "B",
+                    "2024-01-01",
+                    "product",
+                    "status: accepted\nsupersedes: [2023-01-01-a]\nproject: shop\n",
+                    "Email is the contact channel.",
+                ),
+            ),
+            (
+                "decisions/2025-01-01-c.md",
+                &decision(
+                    "C",
+                    "2025-01-01",
+                    "process",
+                    "status: proposed\n",
+                    "Chat could be the contact channel.",
+                ),
+            ),
+            (
+                "policies/contact.md",
+                "# Contact\n\nThe contact channel is whatever works.",
+            ),
+        ])
+    }
+
+    #[test]
+    fn superseded_decisions_are_hidden_unless_asked_for_and_say_what_replaced_them() {
+        let (_d, s) = rules();
+        let paths_of = |f: &Filter| -> Vec<String> {
+            found(&s, "contact", 10, f)
+                .into_iter()
+                .map(|h| h.path)
+                .collect()
+        };
+        let plain = paths_of(&Filter::default());
+        assert!(
+            !plain.contains(&"decisions/2023-01-01-a.md".to_string()),
+            "{plain:?}"
+        );
+        let all = found(
+            &s,
+            "contact",
+            10,
+            &Filter {
+                all: true,
+                ..Default::default()
+            },
+        );
+        let old = all
+            .iter()
+            .find(|h| h.path == "decisions/2023-01-01-a.md")
+            .unwrap();
+        assert_eq!(old.status.as_deref(), Some("superseded"));
+        assert_eq!(
+            old.superseded_by.as_deref(),
+            Some("decisions/2024-01-01-b.md")
+        );
+        assert_eq!(all.last().unwrap().path, old.path, "last of all");
+        let asked = paths_of(&Filter {
+            status: Some("superseded"),
+            ..Default::default()
+        });
+        assert_eq!(asked, ["decisions/2023-01-01-a.md"]);
+    }
+
+    #[test]
+    fn with_all_the_current_decision_is_still_found_behind_many_superseded_ones() {
+        let mut files: Vec<(String, String)> = (0..4)
+            .map(|i| {
+                (
+                    format!("decisions/2023-0{}-01-old{i}.md", i + 1),
+                    decision(
+                        "Old",
+                        &format!("2023-0{}-01", i + 1),
+                        "product",
+                        "status: superseded\nsuperseded-by: 2025-01-01-new\n",
+                        &"gizmo ".repeat(10),
+                    ),
+                )
+            })
+            .collect();
+        files.push((
+            "decisions/2025-01-01-new.md".into(),
+            decision(
+                "New",
+                "2025-01-01",
+                "product",
+                "status: accepted\n",
+                "gizmo",
+            ),
+        ));
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let (_d, s) = brain(&refs);
+        let hits = found(
+            &s,
+            "gizmo",
+            1,
+            &Filter {
+                all: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(hits[0].path, "decisions/2025-01-01-new.md");
+    }
+
+    #[test]
+    fn asking_for_the_superseded_stops_at_the_window() {
+        let files: Vec<(String, String)> = (0..6)
+            .map(|i| {
+                (
+                    format!("decisions/2023-0{}-01-old{i}.md", i + 1),
+                    decision(
+                        "Old",
+                        "2023-01-01",
+                        "product",
+                        "status: superseded\n",
+                        &format!("gizmo {i}"),
+                    ),
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let (_d, s) = brain(&refs);
+        let hits = found(
+            &s,
+            "gizmo",
+            2,
+            &Filter {
+                status: Some("superseded"),
+                ..Default::default()
+            },
+        );
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn filters_narrow_by_kind_project_since_and_status() {
+        let (_d, s) = rules();
+        let only = |f: Filter| -> Vec<String> {
+            found(&s, "contact", 10, &f)
+                .into_iter()
+                .map(|h| h.path)
+                .collect()
+        };
+        assert_eq!(
+            only(Filter {
+                kind: Some("process"),
+                ..Default::default()
+            }),
+            ["decisions/2025-01-01-c.md"]
+        );
+        assert_eq!(
+            only(Filter {
+                kind: Some("raw"),
+                ..Default::default()
+            }),
+            ["policies/contact.md"]
+        );
+        assert_eq!(
+            only(Filter {
+                project: Some("shop"),
+                ..Default::default()
+            }),
+            ["decisions/2024-01-01-b.md"]
+        );
+        assert_eq!(
+            only(Filter {
+                since: Some("2024-06-01"),
+                kind: Some("decision"),
+                ..Default::default()
+            }),
+            ["decisions/2025-01-01-c.md"]
+        );
+        assert_eq!(
+            only(Filter {
+                status: Some("accepted"),
+                ..Default::default()
+            }),
+            ["decisions/2024-01-01-b.md"]
+        );
+        let kinds = found(
+            &s,
+            "contact",
+            10,
+            &Filter {
+                kind: Some("decision"),
+                ..Default::default()
+            },
+        );
+        assert_eq!(kinds.len(), 2);
+        assert!(only(Filter {
+            project: Some("nowhere"),
+            ..Default::default()
+        })
+        .is_empty());
+        for bad in [
+            Filter {
+                kind: Some("memo"),
+                ..Default::default()
+            },
+            Filter {
+                status: Some("draft"),
+                ..Default::default()
+            },
+            Filter {
+                since: Some("last week"),
+                ..Default::default()
+            },
+            Filter {
+                since: Some("2024-01-01T10:00"),
+                ..Default::default()
+            },
+        ] {
+            let q = Query {
+                terms: Some("contact"),
+                about: None,
+                k: 3,
+            };
+            assert!(
+                search_filtered(&s, &mut Fake, &q, &bad, EXACT_LIMIT).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    fn entry(path: &str, kind: &str, status: Option<&str>, stale: bool) -> (usize, Hit) {
+        (
+            0,
+            Hit {
+                id: path.into(),
+                source: "s".into(),
+                path: path.into(),
+                file: path.into(),
+                title: String::new(),
+                heading: String::new(),
+                date: String::new(),
+                kind: kind.into(),
+                status: status.map(String::from),
+                project: None,
+                superseded_by: None,
+                amended_by: vec![],
+                stale,
+                score: 0.0,
+                snippet: String::new(),
+                versions: vec![],
+            },
+        )
+    }
+
+    fn ordered(hits: Vec<(usize, Hit)>, k: usize) -> Vec<String> {
+        trusted(&[], hits, k, &Filter::default())
+            .unwrap()
+            .into_iter()
+            .map(|h| h.path)
+            .collect()
+    }
+
+    #[test]
+    fn an_accepted_decision_moves_up_one_place_and_wins_the_tie() {
+        let raw = |p: &str| entry(p, "raw", None, false);
+        let hits = vec![
+            raw("r0"),
+            raw("r1"),
+            raw("r2"),
+            entry("dec", "product", Some("accepted"), false),
+            raw("r4"),
+        ];
+        assert_eq!(ordered(hits, 5), ["r0", "r1", "dec", "r2", "r4"]);
+        let hits = vec![raw("r0"), entry("adr", "adr", Some("accepted"), false)];
+        assert_eq!(ordered(hits, 2), ["adr", "r0"], "an ADR is a decision");
+        // A decision just outside the top k can come in, one further out cannot.
+        let from = |n: usize| -> Vec<(usize, Hit)> {
+            let mut hits: Vec<_> = (0..n).map(|i| raw(&format!("r{i}"))).collect();
+            hits.push(entry("dec", "business", Some("accepted"), false));
+            hits
+        };
+        assert_eq!(ordered(from(2), 2), ["r0", "dec"]);
+        assert_eq!(ordered(from(3), 2), ["r0", "r1"]);
+    }
+
+    #[test]
+    fn proposals_and_decisions_without_a_status_are_documents_and_superseded_ones_come_last() {
+        let hits = vec![
+            entry("sup", "product", Some("superseded"), false),
+            entry("prop", "product", Some("proposed"), false),
+            entry("raw", "raw", None, false),
+            entry("nostatus", "decision", None, false),
+        ];
+        assert_eq!(ordered(hits, 4), ["prop", "raw", "nostatus", "sup"]);
+    }
+
+    #[test]
+    fn a_real_search_reports_each_entrys_kind_and_status() {
+        let (_d, s) = brain(&[
+            ("policies/raw.md", "# Raw\n\nQuokka."),
+            (
+                "decisions/2024-01-01-d.md",
+                &decision(
+                    "D",
+                    "2024-01-01",
+                    "business",
+                    "status: accepted\n",
+                    "Quokka.",
+                ),
+            ),
+            (
+                "decisions/2024-02-01-p.md",
+                &decision(
+                    "P",
+                    "2024-02-01",
+                    "business",
+                    "status: proposed\n",
+                    "Quokka.",
+                ),
+            ),
+        ]);
+        let hits = found(&s, "quokka", 3, &Filter::default());
+        assert_eq!(hits.len(), 3);
+        let status = |p: &str| {
+            let h = hits.iter().find(|h| h.path == p).unwrap();
+            (h.kind.clone(), h.status.clone())
+        };
+        assert_eq!(
+            status("decisions/2024-01-01-d.md"),
+            ("business".into(), Some("accepted".into()))
+        );
+        assert_eq!(
+            status("decisions/2024-02-01-p.md"),
+            ("business".into(), Some("proposed".into()))
+        );
+        assert_eq!(status("policies/raw.md"), ("raw".into(), None));
+    }
+
+    #[test]
+    fn an_amended_adr_comes_with_its_amendments_and_a_projects_adrs_count_as_its_own() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("courier-app");
+        for (p, t) in [
+            ("docs/adr/0002-a.md", "# 0002: Currencies\n\nStatus: accepted; amended by [0004](0004-b.md)\n\nStored in ISK and EUR."),
+            ("docs/adr/0004-b.md", "# 0004: Add NOK\n\nStatus: accepted; amended by [0005](0005-c.md)\n\nNOK as well."),
+            ("docs/adr/0005-c.md", "# 0005: NOK rounding\n\nStatus: accepted\n\nRounded at the edge."),
+            ("docs/adr/0001-o.md", "# 0001: Old\n\nStatus: superseded by 0002\n\nStored in ISK only."),
+            ("docs/PRODUCT.md", "# Product\n\nAmounts in ISK."),
+        ] {
+            let full = root.join(p);
+            fs::create_dir_all(full.parent().unwrap()).unwrap();
+            fs::write(full, t).unwrap();
+        }
+        let source = Source {
+            label: crate::sources::PROJECT.into(),
+            kind: crate::sources::Kind::Project {
+                docs: "docs".into(),
+            },
+            root: root.clone(),
+            exists: true,
+            update: false,
+        };
+        let mut store = Store::create(&dir.path().join("idx/index.sqlite"), &root).unwrap();
+        index::index(&source, &mut store, &mut Fake, false).unwrap();
+        let s = vec![Opened::new(&source, store)];
+
+        let hits = found(&s, "ISK", 2, &Filter::default());
+        let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        let at = paths
+            .iter()
+            .position(|p| *p == "docs/adr/0002-a.md")
+            .unwrap();
+        assert_eq!(hits[at].kind, "adr");
+        assert_eq!(hits[at].amended_by, ["docs/adr/0004-b.md"]);
+        assert_eq!(paths[at + 1], "docs/adr/0004-b.md", "{paths:?}");
+        // The amendment was amended too, and comes along.
+        assert_eq!(paths[at + 2], "docs/adr/0005-c.md", "{paths:?}");
+        assert!(!paths.contains(&"docs/adr/0001-o.md"));
+
+        // No `project:` in an ADR: it is the project's, named after its folder here (no remote).
+        let own = found(
+            &s,
+            "ISK",
+            10,
+            &Filter {
+                project: Some("courier-app"),
+                kind: Some("adr"),
+                ..Default::default()
+            },
+        );
+        assert_eq!(own.len(), 3);
+        assert!(found(
+            &s,
+            "ISK",
+            10,
+            &Filter {
+                project: Some("other"),
+                ..Default::default()
+            }
+        )
+        .is_empty());
     }
 
     #[test]

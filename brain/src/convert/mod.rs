@@ -41,6 +41,9 @@ pub struct Converted {
     pub date: Option<String>,
     /// Whether `#` lines are headings: not in source code, YAML or logs.
     pub prose: bool,
+    /// What a decision's frontmatter says about it; only Markdown and text files carry any.
+    #[serde(default)]
+    pub meta: doc::Meta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,6 +218,7 @@ fn plain(text: &str, prose: bool) -> Converted {
         title: None,
         date: None,
         prose,
+        meta: doc::Meta::default(),
     }
 }
 
@@ -228,6 +232,7 @@ fn run(format: Format, bytes: &[u8]) -> Result<Converted, String> {
                 title: parsed.title,
                 date: parsed.date,
                 prose: true,
+                meta: parsed.meta,
             }
         }
         Format::Code => plain(&text::decode(bytes), false),
@@ -423,6 +428,7 @@ mod tests {
             title: Some("T".into()),
             date: None,
             prose: true,
+            meta: doc::Meta::default(),
         };
         cache_put(dir.path(), "aa", &c);
         cache_put(dir.path(), "bb", &c);

@@ -178,6 +178,7 @@ pub fn convert(bytes: &[u8]) -> Result<Converted, String> {
         title: None,
         date: None,
         prose: true,
+        meta: Default::default(),
     })
 }
 

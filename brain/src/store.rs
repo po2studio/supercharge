@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{chunk, dedup, embed, vecs};
+use crate::{chunk, dedup, doc::Meta, embed, vecs};
 
 const SCHEMA: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -20,6 +20,13 @@ CREATE TABLE files (
     title TEXT NOT NULL,
     date TEXT NOT NULL,
     kind TEXT NOT NULL,
+    project TEXT NOT NULL DEFAULT '',
+    -- What a decision or ADR says (see `decisions::resolve`): `status` and the two links are what
+    -- search reads; `meta` is what the file itself declared.
+    status TEXT NOT NULL DEFAULT '',
+    superseded_by TEXT NOT NULL DEFAULT '',
+    amended_by TEXT NOT NULL DEFAULT '',
+    meta TEXT NOT NULL DEFAULT '',
     -- The date the document gives itself (frontmatter, or Office or email properties), if any.
     own_date TEXT,
     -- A fingerprint of the text for near-copies; none for a text too short to have one.
@@ -45,6 +52,7 @@ CREATE TABLE chunks (
     code BLOB NOT NULL
 );
 CREATE INDEX chunks_file ON chunks(file_id);
+CREATE INDEX files_status ON files(status);
 CREATE VIRTUAL TABLE fts USING fts5(header, body, tokenize = 'unicode61 remove_diacritics 2');
 ";
 
@@ -78,6 +86,7 @@ pub struct NewFile {
     pub date: String,
     pub own_date: Option<String>,
     pub kind: String,
+    pub meta: Meta,
     pub simhash: Option<u64>,
     pub chunks: Vec<NewChunk>,
 }
@@ -105,8 +114,13 @@ pub fn index_path(key: &str) -> Result<PathBuf> {
         .join("index.sqlite"))
 }
 
-fn expected_meta() -> [(&'static str, String); 3] {
+fn expected_meta() -> [(&'static str, String); 4] {
     [
+        // Any change to the tables rebuilds the index, with no version to remember to bump.
+        (
+            "schema",
+            format!("{:x}", Sha256::digest(SCHEMA.as_bytes()))[..16].to_string(),
+        ),
         ("model_id", embed::MODEL_ID.to_string()),
         ("binary_version", env!("CARGO_PKG_VERSION").to_string()),
         ("chunker_version", chunk::VERSION.to_string()),
@@ -308,15 +322,24 @@ impl Store {
         for file in files {
             remove(&tx, &file.path)?;
             tx.execute(
-                "INSERT INTO files(path, hash, title, date, kind, own_date, simhash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO files(path, hash, title, date, kind, project, status, superseded_by, amended_by, meta, own_date, simhash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     file.path,
                     file.hash,
                     file.title,
                     file.date,
                     file.kind,
+                    file.meta.project.as_deref().unwrap_or_default(),
+                    file.meta.status.as_deref().unwrap_or_default(),
+                    file.meta.superseded_by.as_deref().unwrap_or_default(),
+                    file.meta.amended_by.join("\n"),
+                    if file.meta.is_empty() {
+                        String::new()
+                    } else {
+                        serde_json::to_string(&file.meta)?
+                    },
                     file.own_date,
-                    file.simhash.map(|f| f as i64)
+                    file.simhash.map(|f| f as i64),
                 ],
             )?;
             let file_id = tx.last_insert_rowid();
@@ -388,6 +411,7 @@ mod tests {
             date: "2024-01-01".into(),
             own_date: None,
             kind: "raw".into(),
+            meta: Meta::default(),
             simhash: None,
             chunks: texts
                 .iter()
