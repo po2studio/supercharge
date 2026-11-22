@@ -19,29 +19,29 @@ Hard requirements (owner, 2026-11-03):
 ## Deliverables
 - **`brain` binary** (Rust, in this repo under `brain/`, released for 4 platforms): converts any file to text, chunks it, embeds it on the CPU with a multilingual model compiled in, and keeps one SQLite index (full-text plus vectors). Commands: `index`, `search`, `check`, `stats`, `eval`, `bench`. Decided in [ADR 0001](../adr/0001-one-binary-in-the-bundle.md) and [ADR 0002](../adr/0002-local-embeddings-one-sqlite-index.md).
 - **`brain` skill**, which owns every brain behaviour:
-  - first-run setup: the brain's location, then the download with its size and checksum, then the first index;
+  - first-run setup: the download with its size and checksum, then the first index. There's no location question: the project is always a source, and outside sources are listed per project ([ADR 0004](../adr/0004-brain-sources-per-project.md));
   - agentic hybrid search: the agent picks terms and/or a plain-language description, filters, and refines, in a subagent on the small model, answering with citations and dates;
   - the ship step and `/brain refresh`;
   - the brain repo's CI.
-- **Decisions** in the brain: `supercharge` searches before it asks and records the human's answers, and the ship step records what shipped work decided. A project's ADRs stay in its repo and are searched where they are.
+- **Decisions** in the `update: true` source: `supercharge` searches before it asks and records the human's answers, and the ship step records what shipped work decided. With no such source, decisions stay in the feature doc and the ADRs, as today, and are searched there. A project's ADRs stay in its repo and are searched where they are.
 - **Notes**, written on demand when a `/brain` answer had to synthesise several files, each citing its sources by hash, so a change in a source marks the note stale. A lint pass keeps, updates, merges, replaces or deletes.
 - **Ship step** in the `brain` skill, run after every merge into `main` by whichever skill merged it: brings the brain up to date with what shipped, and reports the brain's health.
 - **Checks:** `brain check` in the brain repo's CI, which also keeps one issue open while notes are stale, plus the PR check in `build-slice`: decisions and notes whose `touches:` match the changed paths.
-- **Project docs defer to the brain:** with a brain, `living-docs` writes no new BUSINESS.md; an existing one and the ADRs stay in the project and are indexed where they are ([ADR 0003](../adr/0003-the-brain-is-a-folder.md)).
+- **Project docs are read in place:** the project's docs folder, README and AGENTS.md are always a source, never written by the brain. With an outside source, `living-docs` writes no new BUSINESS.md; an existing one stays in the project ([ADR 0004](../adr/0004-brain-sources-per-project.md)).
 - **This bundle's own docs describe a bundle with a binary:** the README's Philosophy ("nothing beyond `git` and `gh`", "read it all in one sitting") and `docs/ARCHITECTURE.md` ("no code to run") are rewritten for a bundle whose optional `brain` skill downloads one binary. The ADRs are the decision; `ARCHITECTURE.md` describes today, so it changes when the binary ships.
 - **Shared index** for big brains: built once in CI, pulled by everyone.
 - **Eval:** a corpus plus golden questions, run in CI, with every slice reporting its before and after.
 
 ## Acceptance criteria
-1. On a machine with only omp or Claude Code and the skills, `/brain <question>` with nothing configured asks where the brain is and shows the download size. On `go` it downloads and checks the binary, indexes, and answers with cited sources. No API key, nothing else installed, nothing written into any project.
-2. Any file a person drops into the brain is indexed or reported as unconverted, including flat text with no structure, PDFs, Office files, email, CSV and Icelandic text. Nothing in it is ever edited by an agent, and nothing per machine is written into it.
+1. On a machine with only omp or Claude Code and the skills, `/brain <question>` in a project with nothing configured shows the download size. On `go` it downloads and checks the binary, indexes the project's docs, and answers with cited sources. No API key, nothing else installed, nothing written into the project or any source.
+2. Any file a person drops into a source is indexed or reported as unconverted, including flat text with no structure, PDFs, Office files, email, CSV and Icelandic text. Nothing in it is ever edited by an agent, and nothing per machine is written into it.
 3. A question that shares no words with its answer finds it. A question with an exact term (an ID, a name) finds that.
 4. A business rule decided in an earlier `supercharge` session is cited, not asked again. A superseded decision never comes back as current.
 5. When a raw source changes, the notes built from it show as stale until the ship step or `/brain refresh` refreshes them. In a brain on GitHub, stale notes show as one open issue that starts the refresh.
 6. A PR that changes code a decision or note `touches:` lists it for the ship step to update (a decision by superseding it), or says `brain: unchanged` and why. The brain repo's CI runs `brain check`.
 7. The eval runs in CI. Hybrid search beats full-text alone on it, and a regression fails CI.
 8. At 1M chunks, search p50 is ≤ 500 ms on a 6-core laptop CPU. A fresh machine on a big brain pulls the shared index and embeds only what changed since it was built.
-9. With no brain configured, every skill behaves as it does today, and each of `supercharge`, `build-slice`, `drive-feature` and `living-docs` carries at most one line about the brain.
+9. Without the `brain` skill installed, every skill behaves as it does today, and each of `supercharge`, `build-slice`, `drive-feature` and `living-docs` carries at most one line about the brain.
 10. Every merge into `main`, by any route (`supercharge`, `drive-feature`, or `build-slice` on its own), runs the ship step, and its report ends with the brain's health line. Commits that skipped the skills are caught at the next ship. Nothing about code is written to the brain before that code merges.
 11. A project's ADRs and BUSINESS.md are found by `brain search` where they are: a superseded ADR only with `--all`, an amended one together with its amendments.
 
@@ -61,12 +61,17 @@ Adds **Ask the brain** (`/brain <question>`, first-run setup included) to [PRODU
 Medium (default). This is the first runnable code in the bundle, so the binary gets real tests and runs, not just a review.
 
 ## Settled rules (shared by every slice)
-**Brain location.** One brain per human or team, spanning projects ([ADR 0003](../adr/0003-the-brain-is-a-folder.md)). `/brain`'s first run asks where it is (default `~/brain`) and writes the path to `~/.config/supercharge/brain`; a `brain:` key in a project's AGENTS.md config block (absolute, `~/…`, or relative to the repo) overrides it for that project. Neither is in the block `living-docs` writes and asks about, so no skill asks for it as a missing key; with neither set there is no brain. Inside the root:
-- `BRAIN.md`: conventions and format version, short.
-- `decisions/YYYY-MM-DD-slug.md`: business, product and process decisions. Named by date, not number, because many projects and sessions write to one brain. Architecture decisions stay as ADRs in each project's `docs/adr/`.
-- `notes/*.md`: written by agents.
-- `projects/<project>.yaml`: the last commit of that project the ship step reconciled.
-- **Everything else is raw:** any files, any folders. Agents never edit raw files. Point the brain at an existing docs folder and it works as it is. Nothing per machine is written into the root: the index and caches live under `~/.cache/supercharge/`, since the root may be a synced folder.
+**Sources** ([ADR 0004](../adr/0004-brain-sources-per-project.md)). Installing the `brain` skill turns the brain on; there's no global path and no location question.
+- **The project** is always a source, read in place and never written by the brain: its docs folder (the `docs` key in AGENTS.md, which may move it), `README.md` and `AGENTS.md`.
+- **Outside sources** are listed in the project's AGENTS.md config block, none by default: `brain:` is a list of `{path, update}`, each path absolute, `~/…` or relative to the repo. `update` defaults to `false`. `/brain` never writes the key; it says which line to add. It's not in the block `living-docs` writes and asks about, so no skill asks for it as missing.
+- **Writing:** at most one source per project sets `update: true` (two is an error naming both). Only there do agents write, and only their own files. With none, the brain writes no documents anywhere. Inside the `update: true` source:
+  - `BRAIN.md`: conventions and format version, short.
+  - `decisions/YYYY-MM-DD-slug.md`: business, product and process decisions. Named by date, not number, because many projects and sessions write to one source. Architecture decisions stay as ADRs in each project's `docs/adr/`.
+  - `notes/*.md`: written by agents.
+  - `projects/<project>.yaml`: the last commit of that project the ship step reconciled.
+- **Everything else is raw,** in every source: any files, any folders, flat or nested. Agents never edit raw files. Nothing per machine is written into a source: the index and caches live under `~/.cache/supercharge/`, since a source may be a synced folder.
+- **Separation:** a search covers only the current project and the sources it lists, so organisations stay apart.
+- **The brain repo** below means the `update: true` source when it's a GitHub repo.
 
 **Project name.** The repo name from the `origin` remote, else the folder name. `brain index` and `brain check --changed` take `--project`, defaulting to it inside a git repo.
 
@@ -89,9 +94,9 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 
 **Notes.** A note holds what's expensive to get from the raw files (a 40-page policy → its ten rules; an answer that took five documents), never how the code works. Notes are written on demand: by `/brain` when an answer had to synthesise several files. The ship step's lint and `/brain refresh` refresh, merge or delete existing notes and write none. Nothing turns raw files into notes wholesale.
 
-**Project docs in place.** With a brain, `brain index` run from a project also indexes that project's `docs/adr/` and `docs/BUSINESS.md` where they are, keyed by project and path relative to the project root, and never writes there; `adr` works as it does today, and `living-docs` writes no new BUSINESS.md but leaves an existing one alone. These entries are refreshed whenever `brain index` runs from that project (every `/brain` and ship step there) and are never part of the shared index. An ADR's status comes from its status line: `superseded by` hides it like a superseded decision, and `amended by` returns it together with its amendments. ADRs rank with accepted decisions.
+**Project docs in place.** `brain index` run from a project indexes its docs folder, `README.md` and `AGENTS.md` where they are, keyed by project and path relative to the project root, and never writes there; `adr` works as it does today. With an outside source, `living-docs` writes no new BUSINESS.md but leaves an existing one alone. These entries are refreshed whenever `brain index` runs from that project (every `/brain` and ship step there) and are never part of the shared index. An ADR's status comes from its status line: `superseded by` hides it like a superseded decision, and `amended by` returns it together with its amendments. ADRs rank with accepted decisions.
 
-**Ship step.** Ship means a merge into `main`, by any route. Right after it, whichever skill merged (`supercharge` for a direct change or a ticket, `drive-feature` for a feature, `build-slice` when it merges into `main` itself) runs the `brain` skill's ship step in a builder subagent and relays its report:
+**Ship step.** Ship means a merge into `main`, by any route. Right after it, whichever skill merged (`supercharge` for a direct change or a ticket, `drive-feature` for a feature, `build-slice` when it merges into `main` itself) runs the `brain` skill's ship step in a builder subagent and relays its report. With no `update: true` source there is nothing to write, and the step is skipped. Otherwise:
 - `brain check --changed` over every commit since the project's reconciled commit, not just this PR's, so changes made outside the skills are caught;
 - apply the brain updates the PRs listed (`drive-feature`'s final PR combines its slices' `brain:` lines, as it combines their ledgers); supersede or retarget decisions and notes whose `touches:` now match no file;
 - record the business, product and process decisions the shipped work made that the brain doesn't hold yet: from the feature doc's assumptions and decisions and the decision ledgers, only what a future agent would undo or ask about. A technical decision at that bar belongs in an ADR in the project's PR; one found only in a ledger is flagged in the report, not written to the brain;
@@ -106,14 +111,14 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - **Trust order:** accepted decisions, then fresh notes, then raw files, then stale notes.
 - Superseded decisions only appear with `--all`, and point to what replaced them.
 
-**Where `supercharge` uses the brain.** Any route that asks business questions (ticket, feature, and the triage after a brainstorm) searches the brain first and cites what's settled instead of asking. After `go`, it records each answer as a decision whose `source` is the issue, and the feature doc's assumptions and decisions link to those files rather than repeating them. A brainstorm that ends in "not now" writes nothing, to the brain included. The direct route asks nothing, so records nothing until its ship step.
+**Where `supercharge` uses the brain.** Any route that asks business questions (ticket, feature, and the triage after a brainstorm) searches the brain first and cites what's settled instead of asking. After `go`, with an `update: true` source, it records each answer there as a decision whose `source` is the issue, and the feature doc's assumptions and decisions link to those files rather than repeating them; without one, the answers go in the feature doc as today. A brainstorm that ends in "not now" writes nothing, to the brain included. The direct route asks nothing, so records nothing until its ship step.
 
 **Harnesses.** The `brain` skill and every skill change work in omp and Claude Code, following [0003](0003-claude-code.md)'s wording rule: name the capability, and name a harness only in a short clause where the two differ.
 - Search subagent: omp's `sonic` on `smol` (it has a shell; `scout` is read-only and can't run the binary, found in slice 1's first real run); in Claude Code a fresh subagent on `haiku`.
 - Ship step, note refresh and lint: a builder subagent, omp's `task`; in Claude Code a fresh subagent on `sonnet`.
 
 **Index.**
-- One SQLite file per brain at `~/.cache/supercharge/index/<root-hash>/index.sqlite`, holding FTS5 and the vectors (int8, plus 1-bit codes for the first pass). Conversion caches sit beside it.
+- One SQLite file per source at `~/.cache/supercharge/index/<source-hash>/index.sqlite` (the project's docs are one source), holding FTS5 and the vectors (int8, plus 1-bit codes for the first pass). Conversion caches sit beside it. Projects that list the same source share its index. A search runs over the project's index and those of its sources, fused by rank, and each hit says which source it came from.
 - Incremental by content hash.
 - Records the model ID and binary version; a mismatch means a rebuild.
 
@@ -135,9 +140,9 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - `brain eval` reports recall@5, MRR, p50 search latency and indexing chunks/s, against a committed baseline. CI fails on a regression beyond tolerance.
 - Every slice that changes what's indexed or how it ranks adds its cases and puts the before/after in its PR.
 
-**Writing to the brain.** If the brain is a git repo, skills pull with rebase, commit and push to its default branch, and stop on a conflict. Otherwise they just write the files. Entries about code are written by the ship step, after the merge; the decisions `supercharge` records at `go` are the one exception, since they're true before anything is built.
+**Writing to the brain.** Only the `update: true` source is written. If it's a git repo, skills pull with rebase, commit and push to its default branch, and stop on a conflict. Otherwise they just write the files. Entries about code are written by the ship step, after the merge; the decisions `supercharge` records at `go` are the one exception, since they're true before anything is built.
 
-**No brain configured, no change.** The `brain` skill owns every brain behaviour. `supercharge`, `build-slice`, `drive-feature` and `living-docs` each carry at most one line, pointing at `brain` for that step, which applies only when a brain is configured.
+**Not installed, no change.** The `brain` skill owns every brain behaviour. `supercharge`, `build-slice`, `drive-feature` and `living-docs` each carry at most one line, pointing at `brain` for that step, which applies only when the `brain` skill is installed and its binary is already cached. They never start the download; only `/brain` asks for it.
 
 ## Assumptions and decisions
 - **Owner, 2026-11-03:**
@@ -180,10 +185,18 @@ The body has context, decision, alternatives and consequences, in a few lines. O
   - writing to the brain means a direct commit and push, gated by the admission rule, lint and `check`, not by a second human approval;
   - the eval corpus is synthetic and committed here. A run on the owner's real corpus happens outside the repo, with only the numbers going into `runs/`;
   - the 1M-chunk search target is p50 ≤ 500 ms, and indexing with the default model is at least 12 chunks/s on a 6-core CPU;
-  - a team shares one brain, so `brain:` in a committed AGENTS.md is a relative path or a path every member has (`~/brain`).
+  - a team shares its sources, so paths in a committed `brain:` are relative or ones every member has (`~/brains/client-a`).
+- **Owner, 2026-11-22** (after trying slice 1; [ADR 0004](../adr/0004-brain-sources-per-project.md)):
+  - the brain's knowledge stays out of the project; the project's docs are read in place;
+  - installing the `brain` skill turns it on, for the current project only, with no outside source by default; not installing it keeps it off;
+  - outside sources go in the project's AGENTS.md config block, so an agency's clients stay in separate brains; one source is enough, several are nice to have;
+  - writing must be explicit: `update: true` per source, default `false`, raw files never edited even then;
+  - a flat folder with no structure works as a source.
+  
+  This replaces the global path (`~/.config/supercharge/brain`) and the location question from 2026-11-12; slice 1b reworks what slice 1 shipped.
 
 ## Slices
-1 first. Then 2 and 3 together. 4 after 3. 5 after 4. 6 after 5. 7 last, once the corpus is complete. (The bundle ticket [#49](https://github.com/po2studio/supercharge/issues/49) that 1, 3 and 5 build on has shipped.)
+1 first, then 1b. Then 2 and 3 together. 4 after 3. 5 after 4. 6 after 5. 7 last, once the corpus is complete. (The bundle ticket [#49](https://github.com/po2studio/supercharge/issues/49) that 1, 3 and 5 build on has shipped.)
 
 ### Slice 1: Point at a folder, ask why, get a cited answer
 **Delivers** the thinnest path through the whole thing: install the skills, run `/brain <question>`, answer two questions (where the brain lives, and whether to download, with the size shown), and get an answer with citations from a folder of markdown and text files. It also sets up everything later slices build on:
@@ -224,6 +237,32 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - Binary size. Target ≤ 200 MB; the skill description states the real number.
 - This is the biggest slice. If it has to split, split along the steps of the end-to-end path, never into layers.
 
+Shipped 2026-11-21 ([#65](https://github.com/po2studio/supercharge/pull/65)). Its location question and global path are replaced by slice 1b.
+
+### Slice 1b: The brain works on the project with no setup; outside sources opt in
+**Delivers** the source model of [ADR 0004](../adr/0004-brain-sources-per-project.md), reworking slice 1's setup:
+- **Binary:** indexes several sources: the project's docs in place (its `docs` folder, `README.md`, `AGENTS.md`; read-only, keyed by project and path relative to the repo root) and each outside source, one index per source under `~/.cache/supercharge/index/<source-hash>/`; `search` runs over the project's index and its sources', fuses them by rank, and each hit names its source. The ADR status handling stays in slice 3.
+- **The `brain` skill:**
+  - reads sources from the `brain:` list in the project's AGENTS.md; no location question, no `~/.config/supercharge/brain`;
+  - first run asks only for the download: size and cache path, then `go`;
+  - creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` only in the `update: true` source, if missing; two `update: true` sources stop with a message naming both;
+  - never writes `brain:`; when asked to add a source, it says the line to add.
+- **Docs:** README (Brain and Config), `docs/PRODUCT.md` and `docs/ARCHITECTURE.md` describe the source model; nothing still mentions `~/.config/supercharge/brain`.
+
+**Acceptance criteria** (feature AC 1, 9, and 11 for finding project docs in place)
+1. In a project with the skill installed and nothing configured, `/brain <question>` shows the download size and cache path and waits for `go`; then it downloads, verifies, indexes the project's docs folder, `README.md` and `AGENTS.md`, and answers citing them. Nothing is written into the project, and nothing anywhere but `~/.cache/supercharge/`.
+2. A project whose `docs` key points elsewhere indexes that folder.
+3. With `brain:` listing a source without `update`, answers cite the project and that source, and nothing is written into the source.
+4. With a source set `update: true`, the first run creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` there if missing, and nothing else. Two `update: true` sources stop with a message naming both.
+5. Two projects listing different sources: a search in one never returns the other's source files. Two projects listing the same source index it once.
+6. A flat folder (no subfolders, no headings) works as a source.
+7. No skill or doc reads, writes or mentions `~/.config/supercharge/brain`, and a project without `brain:` is never asked for it.
+8. The eval runs over more than one source with no regression; the PR shows before and after.
+
+**Dependencies:** after 1. **Build with:** nothing.
+**Touches:** `brain/` (sources, one index per source, search across them), `skills/brain/`, `brain/eval/`, README (Brain, Config), `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`.
+**Risks:** search across several index files must keep latency; measure it in the eval.
+
 ### Slice 2: Any file goes in
 **Delivers:** whatever people drop into the brain gets indexed.
 - **Conversion to text in the binary:** html, pdf (text layer), docx, xlsx, pptx, odt/ods/odp, rtf, eml/mbox, csv/tsv, json/yaml, and source code. Cached by content hash beside the index under `~/.cache/supercharge/index/<root-hash>/`, never in the brain.
@@ -239,7 +278,7 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 5. Running the index again over unchanged files converts nothing.
 6. The eval gets one questions file for formats and one for duplicates. The PR shows before and after, with no regression.
 
-**Dependencies:** after 1. **Build with:** 3.
+**Dependencies:** after 1b. **Build with:** 3.
 **Touches:** `brain/`: the convert, chunk and dedup modules; search only for filtering duplicates out, using the `versions` field from the settled hit shape. `brain/eval/` (new corpus files and question files). README Brain section (formats line).
 **Risks:**
 - PDF text extraction quality on complex layouts. Measure it in the eval, and don't add OCR.
@@ -247,28 +286,28 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 
 ### Slice 3: Decisions are recorded where they're made and found before anyone asks
 **Delivers:**
-- **Binary:** indexes decision frontmatter; `search` filters by `--kind --project --since --status`; applies the trust order; superseded decisions are hidden unless `--all`, and point to what replaced them; `index --project` (defaulting to the project name rule) indexes the project's `docs/adr/` and `docs/BUSINESS.md` in place, as the settled rule says.
-- **`supercharge`, with a brain** (one line, pointing at `brain`): in any route that asks business questions (ticket, feature, the triage after a brainstorm), searches it before asking and cites the settled ones instead of asking again; after `go`, records each owner decision as a decision file with `decided-by` and `source` set to the issue, and links them from the feature doc instead of repeating them.
-- **`living-docs`, with a brain** (one line): writes no new BUSINESS.md, and leaves an existing one alone. **`adr`** doesn't change.
-- **The ship step, v1** (in the `brain` skill, per the settled rule): after any merge into `main`, in a builder subagent, record the business, product and process decisions the shipped work made that the brain doesn't hold yet (a technical one at that bar is flagged as a missing ADR, not written), then pull with rebase, commit and push the brain. One line each in `supercharge` (after a direct change or ticket merges), `drive-feature` (the finish) and `build-slice` (when it merges into `main` itself) runs it. Slices 4 and 5 add the rest of the ship step.
+- **Binary:** indexes decision frontmatter; `search` filters by `--kind --project --since --status`; applies the trust order; superseded decisions are hidden unless `--all`, and point to what replaced them; a project's ADRs (indexed in place since slice 1b) take their status from their status line, as the settled rule says.
+- **`supercharge`, with the `brain` skill installed** (one line, pointing at `brain`): in any route that asks business questions (ticket, feature, the triage after a brainstorm), searches it before asking and cites the settled ones instead of asking again; after `go`, with an `update: true` source, records each owner decision there as a decision file with `decided-by` and `source` set to the issue, and links them from the feature doc instead of repeating them.
+- **`living-docs`, with an outside source** (one line): writes no new BUSINESS.md, and leaves an existing one alone. **`adr`** doesn't change.
+- **The ship step, v1** (in the `brain` skill, per the settled rule): after any merge into `main`, in a builder subagent, with an `update: true` source, record the business, product and process decisions the shipped work made that the brain doesn't hold yet (a technical one at that bar is flagged as a missing ADR, not written), then pull with rebase, commit and push that source. One line each in `supercharge` (after a direct change or ticket merges), `drive-feature` (the finish) and `build-slice` (when it merges into `main` itself) runs it. Slices 4 and 5 add the rest of the ship step.
 
 **Acceptance criteria** (feature AC 4, 9, 11, and 10 for recording decisions)
 1. `supercharge`, asked for a ticket or feature that touches a rule already decided in the brain, cites that decision and doesn't ask the question.
-2. After `go`, every answered business question exists as a decision file with valid frontmatter and a source link, and the feature doc links to it.
+2. After `go`, with an `update: true` source, every answered business question exists there as a decision file with valid frontmatter and a source link, and the feature doc links to it. Without one, the answers are in the feature doc as today.
 3. Searching a topic whose decision was superseded returns the current decision. The old one appears only with `--all`, marked superseded and pointing to its replacement.
 4. A project's ADRs and BUSINESS.md are found by `brain search` where they are: a superseded ADR only with `--all`, an amended one together with its amendments. Nothing in the project is written by the brain.
 5. After a merge into `main` by any route (direct, ticket, feature, `build-slice` on its own), the ship step records the shipped work's decisions; running it twice records each exactly once. Nothing about code is written to the brain before its merge.
 6. A brainstorm that ends in "not now" writes nothing to the brain.
-7. With a brain, `living-docs` on a project without BUSINESS.md creates none; on one with it, leaves it as it is. Without a brain, its docs are exactly today's.
+7. With an outside source, `living-docs` on a project without BUSINESS.md creates none; on one with it, leaves it as it is. Without the `brain` skill installed, its docs are exactly today's.
 8. The eval gets a decisions questions file, including a superseded-decision trap and an amended ADR, and the PR shows before and after.
 
-**Dependencies:** after 1. **Build with:** 2.
-**Touches:** `brain/`: frontmatter metadata, project docs in place, filters, ranking. `skills/brain` (ship step), one line each in `skills/supercharge`, `skills/drive-feature`, `skills/build-slice`, `skills/living-docs`. `brain/eval/`. README Brain section.
+**Dependencies:** after 1b. **Build with:** 2.
+**Touches:** `brain/`: frontmatter metadata, ADR status, filters, ranking. `skills/brain` (ship step), one line each in `skills/supercharge`, `skills/drive-feature`, `skills/build-slice`, `skills/living-docs`. `brain/eval/`. README Brain section.
 **Risks:** decision bloat. Record only what a future agent would undo or ask about, which is the bar `adr` already uses.
 
 ### Slice 4: Notes stay true
 **Delivers:**
-- **Notes on demand** (in the `brain` skill): when a `/brain` answer had to synthesise several files, the scout proposes a note and a builder subagent writes it, following the notes rule: `sources` with hashes, `summary`, `aliases`, `questions`, `verified`. Nothing turns raw files into notes wholesale.
+- **Notes on demand** (in the `brain` skill): when a `/brain` answer had to synthesise several files, the scout proposes a note and a builder subagent writes it in the `update: true` source (with none, no note), following the notes rule: `sources` with hashes, `summary`, `aliases`, `questions`, `verified`. Nothing turns raw files into notes wholesale.
 - **Binary:** `index` marks a note stale when a source's hash changed or the source is gone; stale notes rank below raw files and are flagged in hits; `stats` reports stale notes, notes nothing points to, and duplicates.
 - **Lint** (in the `brain` skill, in a builder subagent): stale notes are refreshed or deleted; contradictions with code or decisions are flagged, not silently fixed; duplicates are merged; each note found ends in one of keep, update, merge, replace, delete. The ship step lints only the stale notes and the entries the changed paths matched; `/brain refresh` lints the whole brain. Neither writes new notes.
 
@@ -292,9 +331,9 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - **`brain check`** fails (with file and reason) on any of: invalid decision or note frontmatter, including `touches` without `project`; broken links; an accepted decision whose body was edited (checked against git history when the brain is a git repo). Stale notes are a warning, not a failure.
 - **`brain check --changed <paths or commit range> --project <name>`** lists the decisions and notes whose `touches:` match, and warns on entries whose `touches:` match no file in the project (dangling).
 - **`brain` skill:**
-  - when the brain is a GitHub repo, setup adds a CI workflow to it that downloads the pinned binary, runs `brain check`, and keeps one open issue listing stale notes, starting `/brain refresh` (closed once none are left);
+  - when the `update: true` source is a GitHub repo (the brain repo), setup adds a CI workflow to it that downloads the pinned binary, runs `brain check`, and keeps one open issue listing stale notes, starting `/brain refresh` (closed once none are left);
   - the ship step gains: `--changed` over every commit since the project's reconciled commit (`projects/<project>.yaml`), not just the PR's; applying the updates the PRs listed (`drive-feature`'s final PR combines its slices' `brain:` lines); superseding or retargeting dangling entries; recording the new reconciled commit; and ending the report with `brain: N stale, N dangling touches, N duplicates`.
-- **`build-slice`, with a brain** (its one line points at `brain`, which says): before removing or reworking code whose purpose isn't clear from the code or tests, search the brain for why and cite it in the decision ledger; before opening the PR, run `--changed` with the PR's paths, and the PR body lists the matched entries for the ship step to update (a decision by superseding it), or says `brain: unchanged` and why. It writes nothing to the brain itself.
+- **`build-slice`, with the `brain` skill installed** (its one line points at `brain`, which says): before removing or reworking code whose purpose isn't clear from the code or tests, search the brain for why and cite it in the decision ledger; before opening the PR, run `--changed` with the PR's paths, and the PR body lists the matched entries for the ship step to update (a decision by superseding it), or says `brain: unchanged` and why. It writes nothing to the brain itself.
 
 **Acceptance criteria** (feature AC 6, 10, and 5 for the brain repo's issue)
 1. Each failure case above makes `brain check` exit non-zero, naming the file and reason. A stale note only warns.
@@ -311,13 +350,13 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 
 ### Slice 6: Big brains: build the index once, everyone pulls
 **Delivers:**
-- **Building and publishing:** the brain repo's CI workflow (from slice 5) also builds the index and publishes it, keyed by the brain commit, the model ID and the binary version. It never contains a project's in-place docs (ADRs, BUSINESS.md).
+- **Building and publishing:** the brain repo's CI workflow (from slice 5) also builds the index and publishes it, keyed by the brain commit, the model ID and the binary version. It never contains a project's docs.
 - **Fetching:** on a machine with no index, `brain index` fetches the newest prebuilt index matching its model and version, using the GitHub access the bundle already has. Then it embeds only the files that differ, and the project docs of the project it runs from.
 - **Falling back:** with no match, or offline, it builds locally.
 - **`brain bench`:** a synthetic brain at a given chunk count, reporting search p50 and indexing chunks/s.
 
 **Acceptance criteria** (feature AC 8)
-1. On a fresh clone of a brain whose CI has published an index, `brain index` downloads it and embeds only files changed since that commit (`stats` shows the count), plus the current project's ADRs and BUSINESS.md.
+1. On a fresh clone of a brain whose CI has published an index, `brain index` downloads it and embeds only files changed since that commit (`stats` shows the count), plus the current project's docs.
 2. An index from a different model or binary version is ignored, and a local build runs.
 3. With no network, indexing builds locally and says why.
 4. On a 100k-document synthetic brain, a fresh machine's first index takes minutes, not hours. Both times go in the PR.
@@ -347,5 +386,5 @@ The body has context, decision, alternatives and consequences, in a few lines. O
 - Claude Code facts (model aliases, subagents, nesting) are in [0003](0003-claude-code.md); check them at code.claude.com/docs again, not from memory. Claude Code stays marked untested until a run is written up in `runs/`.
 - **Smoke runs:** "no smoke run for skill changes" covers skill text only. The binary gets tests, real runs and the eval. Skill-text changes are verified by review against the criteria.
 - Every line in a skill should change behaviour. Keep skill additions short and in the existing voice; `supercharge`, `build-slice`, `drive-feature` and `living-docs` get at most one line each about the brain.
-- With no brain configured, nothing you change may alter today's behaviour.
+- Without the `brain` skill installed, nothing you change may alter today's behaviour.
 
