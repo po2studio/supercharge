@@ -40,22 +40,43 @@ pub fn clip(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
-/// A frontmatter value: quotes removed, and a trailing ` # comment` cut off, as YAML does.
-fn unquote(v: &str) -> &str {
+/// A frontmatter value: quotes removed (with their escapes: `\"` in double quotes, `''` in
+/// single), and a trailing ` # comment` cut off, as YAML does.
+fn unquote(v: &str) -> String {
     let v = v.trim();
     for q in ['"', '\''] {
-        if let Some(inner) = v.strip_prefix(q) {
-            if let Some(end) = inner.find(q) {
-                return &inner[..end];
+        let Some(inner) = v.strip_prefix(q) else {
+            continue;
+        };
+        let mut out = String::new();
+        let mut chars = inner.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' if q == '"' => match chars.next() {
+                    Some(e @ ('"' | '\\')) => out.push(e),
+                    Some(e) => {
+                        out.push('\\');
+                        out.push(e);
+                    }
+                    None => out.push('\\'),
+                },
+                c if c == q && q == '\'' && chars.peek() == Some(&q) => {
+                    out.push(q);
+                    chars.next();
+                }
+                c if c == q => return out,
+                c => out.push(c),
             }
         }
+        // Never closed: the text as written.
+        return v.to_string();
     }
     let v = match v.find(" #") {
         Some(i) => &v[..i],
         None if v.starts_with('#') => "",
         None => v,
     };
-    v.trim()
+    v.trim().to_string()
 }
 
 /// A frontmatter list: `[a, b]` on the line, or `- a` lines after an empty value.
@@ -73,7 +94,7 @@ fn list(inline: &str, following: &[&str]) -> Vec<String> {
     };
     items
         .into_iter()
-        .map(|i| unquote(i).to_string())
+        .map(unquote)
         .filter(|i| !i.is_empty())
         .collect()
 }
@@ -101,10 +122,10 @@ pub fn parse(text: &str) -> Parsed<'_> {
                         continue;
                     };
                     let v = unquote(v);
-                    let one = || (!v.is_empty()).then(|| v.to_string());
+                    let one = || (!v.is_empty()).then(|| v.clone());
                     match k.trim() {
-                        "title" if !v.is_empty() => title = Some(clip(v, MAX_TITLE_CHARS)),
-                        "date" => date = valid_date(v),
+                        "title" if !v.is_empty() => title = Some(clip(&v, MAX_TITLE_CHARS)),
+                        "date" => date = valid_date(&v),
                         "kind" => {
                             meta.kind = one().map(|k| k.to_lowercase()).filter(|k| {
                                 matches!(k.as_str(), "business" | "product" | "process")
@@ -116,7 +137,7 @@ pub fn parse(text: &str) -> Parsed<'_> {
                                 matches!(s.as_str(), "proposed" | "accepted" | "superseded")
                             })
                         }
-                        "supersedes" => meta.supersedes = list(v, &lines[i + 1..]),
+                        "supersedes" => meta.supersedes = list(&v, &lines[i + 1..]),
                         "superseded-by" => meta.superseded_by = one(),
                         _ => {}
                     }
@@ -371,6 +392,10 @@ mod tests {
             "---\nkind: product   # business | product | process\nproject: courier-app          # optional\nstatus: superseded # replaced\nsupersedes: [a, b]   # earlier ones\ntitle: \"Use # in titles\"\n---\nx",
         );
         assert_eq!(commented.title.as_deref(), Some("Use # in titles"));
+        let escaped =
+            parse("---\ntitle: \"Use \\\"manual\\\" mode\"  # c\nproject: 'it''s'\n---\nx");
+        assert_eq!(escaped.title.as_deref(), Some("Use \"manual\" mode"));
+        assert_eq!(escaped.meta.project.as_deref(), Some("it's"));
         assert_eq!(commented.meta.kind.as_deref(), Some("product"));
         assert_eq!(commented.meta.project.as_deref(), Some("courier-app"));
         assert_eq!(commented.meta.status.as_deref(), Some("superseded"));

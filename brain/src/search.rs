@@ -279,7 +279,8 @@ pub fn search_filtered(
             (None, None) => unreachable!(),
         };
         let mut hits: Vec<(usize, Hit)> = Vec::new();
-        // Superseded hits (with `--all`) go last, so they don't count towards the window.
+        // Superseded hits (with `--all`) go last, so they don't count towards the window, unless
+        // they are what was asked for.
         let mut current = 0;
         let mut seen: std::collections::HashSet<(usize, String)> = Default::default();
         for ((n, id), score) in ranked {
@@ -287,7 +288,10 @@ pub fn search_filtered(
             // One hit per file of a source; the label is for people, so two sources are told
             // apart by position, not by name.
             if seen.insert((n, hit.path.clone())) {
-                current += usize::from(hit.status.as_deref() != Some("superseded"));
+                current += usize::from(
+                    hit.status.as_deref() != Some("superseded")
+                        || filter.status == Some("superseded"),
+                );
                 hits.push((n, hit));
             }
             if current == window {
@@ -1079,6 +1083,39 @@ mod tests {
             },
         );
         assert_eq!(hits[0].path, "decisions/2025-01-01-new.md");
+    }
+
+    #[test]
+    fn asking_for_the_superseded_stops_at_the_window() {
+        let files: Vec<(String, String)> = (0..6)
+            .map(|i| {
+                (
+                    format!("decisions/2023-0{}-01-old{i}.md", i + 1),
+                    decision(
+                        "Old",
+                        "2023-01-01",
+                        "product",
+                        "status: superseded\n",
+                        "gizmo",
+                    ),
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let (_d, s) = brain(&refs);
+        let hits = found(
+            &s,
+            "gizmo",
+            2,
+            &Filter {
+                status: Some("superseded"),
+                ..Default::default()
+            },
+        );
+        assert_eq!(hits.len(), 2);
     }
 
     #[test]

@@ -219,10 +219,10 @@ mod tests {
             supersedes: vec![old.into()],
             ..meta(status)
         };
-        // A is accepted; B replaced A and was replaced by C, neither of them marking A.
+        // A is accepted; B replaced A and was replaced by C, and A was never marked.
         let (_d, s) = store_of(vec![
             file("decisions/a.md", meta("accepted")),
-            file("decisions/b.md", supersedes("accepted", "a")),
+            file("decisions/b.md", supersedes("superseded", "a")),
             file("decisions/c.md", supersedes("accepted", "b")),
         ]);
         assert_eq!(state(&s, "decisions/a.md").0, "superseded");
