@@ -109,9 +109,18 @@ pub fn walk(source: &Source) -> Result<Walk> {
             }
             for name in PROJECT_FILES {
                 let path = root.join(name);
-                if fs::metadata(&path).is_ok_and(|m| m.is_file())
-                    && out.files.iter().all(|f| f.rel != name)
-                {
+                let Ok(meta) = fs::metadata(&path) else {
+                    continue;
+                };
+                if !meta.is_file() || out.files.iter().any(|f| f.rel == name) {
+                    continue;
+                }
+                if meta.len() > MAX_FILE_BYTES {
+                    let note = format!("{name} (over {} MiB)", MAX_FILE_BYTES >> 20);
+                    if !out.skipped.contains(&note) {
+                        out.skipped.push(note);
+                    }
+                } else {
                     out.files.push(Found {
                         rel: name.to_string(),
                         path,
@@ -512,6 +521,27 @@ mod tests {
     fn a_project_without_docs_or_readme_has_nothing_to_read() {
         let (dir, _) = setup(&[("src/main.md", "x")]);
         assert!(walk(&project(&dir, "docs")).unwrap().files.is_empty());
+    }
+
+    #[test]
+    fn an_oversized_readme_or_agents_md_is_reported_not_read() {
+        let (dir, _) = setup(&[("AGENTS.md", "# Agents"), ("docs/a.md", "# A")]);
+        let big = fs::File::create(dir.path().join("README.md")).unwrap();
+        big.set_len(MAX_FILE_BYTES + 1).unwrap();
+        for docs in ["docs", ""] {
+            let w = walk(&project(&dir, docs)).unwrap();
+            let rels: Vec<&str> = w.files.iter().map(|f| f.rel.as_str()).collect();
+            assert!(!rels.contains(&"README.md"), "docs {docs:?}: {rels:?}");
+            assert_eq!(
+                w.skipped
+                    .iter()
+                    .filter(|s| s.starts_with("README.md"))
+                    .count(),
+                1,
+                "docs {docs:?}: {:?}",
+                w.skipped
+            );
+        }
     }
 
     #[test]

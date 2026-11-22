@@ -96,12 +96,12 @@ pub fn search(
             (None, None) => unreachable!(),
         };
         let mut hits: Vec<Hit> = Vec::new();
+        let mut seen: std::collections::HashSet<(usize, String)> = Default::default();
         for ((n, id), score) in ranked {
             let hit = chunk_hit(&sources[n], id, score)?;
-            if hits
-                .iter()
-                .all(|h| (&h.source, &h.path) != (&hit.source, &hit.path))
-            {
+            // One hit per file of a source; the label is for people, so two sources are told
+            // apart by position, not by name.
+            if seen.insert((n, hit.path.clone())) {
                 hits.push(hit);
             }
             if hits.len() == q.k {
@@ -133,6 +133,10 @@ fn merge(
         all.extend(list.into_iter().map(|(id, score)| ((n, id), score)));
     }
     all.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    // Several sources' lists can together hold more than the pool keeps.
+    if all.len() > pool {
+        *exhausted = false;
+    }
     all.truncate(pool);
     Ok(all)
 }
@@ -528,6 +532,73 @@ mod tests {
         let alone = search(&both[1..], &mut Fake, &q, EXACT_LIMIT).unwrap();
         assert_eq!(alone.len(), 1);
         assert_eq!(alone[0].source, "b");
+    }
+
+    #[test]
+    fn matches_cut_by_the_merged_pool_are_looked_for_again() {
+        // 40 chunks of the same word in each of two big files; the third file, in the first
+        // source, matches once, and sits below the merged pool of 50.
+        let section = |tag: &str| -> String {
+            let filler = (0..70)
+                .map(|i| format!("{tag}{i}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (0..40)
+                .map(|i| format!("# S{i}\n\nbanana banana banana {filler}\n\n"))
+                .collect()
+        };
+        let dir = TempDir::new().unwrap();
+        let a = source(
+            &dir,
+            "a",
+            &[
+                ("big.md", &section("a")),
+                (
+                    "small.md",
+                    &format!(
+                        "# Small\n\nbanana {}",
+                        (0..70)
+                            .map(|i| format!("s{i}"))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
+                ),
+            ],
+        );
+        let b = source(&dir, "b", &[("big.md", &section("b"))]);
+        let q = Query {
+            terms: Some("banana"),
+            about: None,
+            k: 3,
+        };
+        let hits = search(&[a, b], &mut Fake, &q, EXACT_LIMIT).unwrap();
+        let mut found: Vec<(&str, &str)> = hits
+            .iter()
+            .map(|h| (h.source.as_str(), h.path.as_str()))
+            .collect();
+        found.sort();
+        assert_eq!(found, [("a", "big.md"), ("a", "small.md"), ("b", "big.md")]);
+    }
+
+    #[test]
+    fn two_sources_with_the_same_label_stay_two_sources() {
+        let (da, db) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let mut both = Vec::new();
+        for d in [&da, &db] {
+            both.push(source(
+                d,
+                "project",
+                &[("README.md", "# R\n\nThe tangerine rota.")],
+            ));
+        }
+        let q = Query {
+            terms: Some("tangerine"),
+            about: None,
+            k: 5,
+        };
+        let hits = search(&both, &mut Fake, &q, EXACT_LIMIT).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_ne!(hits[0].file, hits[1].file);
     }
 
     #[test]

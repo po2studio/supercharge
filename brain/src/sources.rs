@@ -141,15 +141,22 @@ impl Resolved {
     }
 }
 
-/// Lexically cleans `.` and `..` out of an absolute path.
-fn clean(path: &Path) -> PathBuf {
+/// An absolute path with its symlinks resolved as far as it exists, and `.` and `..` applied in
+/// order: a folder that isn't there yet still lands where its parent really is.
+fn resolve_path(abs: &Path) -> PathBuf {
     let mut out = PathBuf::new();
-    for c in path.components() {
+    for c in abs.components() {
         match c {
             Component::ParentDir => {
                 out.pop();
             }
             Component::CurDir => {}
+            Component::Normal(name) => {
+                out.push(name);
+                if let Ok(real) = out.canonicalize() {
+                    out = real;
+                }
+            }
             c => out.push(c),
         }
     }
@@ -174,7 +181,7 @@ fn expand(listed: &str, base: &Path) -> Result<PathBuf> {
     } else {
         base.join(path)
     };
-    Ok(abs.canonicalize().unwrap_or_else(|_| clean(&abs)))
+    Ok(resolve_path(&abs))
 }
 
 /// The docs folder from the config, relative to the project and inside it.
@@ -242,23 +249,13 @@ pub fn resolve(cwd: &Path, flags: &Flags) -> Result<Resolved> {
             })
             .collect::<Result<_>>()?
     };
-    let updating: Vec<&str> = listed
-        .iter()
-        .filter(|(_, _, update)| *update)
-        .map(|(label, _, _)| label.as_str())
-        .collect();
-    if updating.len() > 1 {
-        bail!(
-            "two sources set `update: true`: {} and {}; at most one source per project may",
-            updating[0],
-            updating[1]
-        );
-    }
-
     let mut outside: Vec<Source> = Vec::new();
     let mut warnings = Vec::new();
     for (label, path, update) in listed {
-        if outside.iter().any(|s| s.root == path) {
+        // The same folder listed twice (an alias, a symlink) is one source, and writable if any
+        // entry for it says so.
+        if let Some(seen) = outside.iter_mut().find(|s| s.root == path) {
+            seen.update |= update;
             continue;
         }
         let exists = path.is_dir();
@@ -267,6 +264,12 @@ pub fn resolve(cwd: &Path, flags: &Flags) -> Result<Resolved> {
                 "the source {label} is not a folder on this machine, so it is left out"
             ));
         }
+        // A folder that is literally called `project` must not pass for the project's docs.
+        let label = if label == PROJECT {
+            format!("./{label}")
+        } else {
+            label
+        };
         outside.push(Source {
             label,
             kind: Kind::Outside,
@@ -274,6 +277,22 @@ pub fn resolve(cwd: &Path, flags: &Flags) -> Result<Resolved> {
             exists,
             update,
         });
+    }
+    let updating: Vec<&Source> = outside.iter().filter(|s| s.update).collect();
+    if updating.len() > 1 {
+        bail!(
+            "two sources set `update: true`: {} and {}; at most one source per project may",
+            updating[0].label,
+            updating[1].label
+        );
+    }
+    if let (Some(project), Some(writable)) = (&project, updating.first()) {
+        if writable.root.starts_with(&project.root) {
+            bail!(
+                "the source {} is the project or inside it, so `update: true` would make agents write into the project; point it at a folder outside",
+                writable.label
+            );
+        }
     }
     if project.is_none() && outside.is_empty() {
         bail!(
@@ -477,5 +496,104 @@ mod tests {
         };
         let o = Source::outside("x", dir.path());
         assert_ne!(p.key(), o.key());
+    }
+
+    #[test]
+    fn a_source_agents_write_into_cannot_be_the_project_or_inside_it() {
+        for entry in [
+            "  - path: .\n    update: true",
+            "  - path: ./brain\n    update: true",
+        ] {
+            let dir = project(Some(&format!("brain:\n{entry}")));
+            let e = format!("{:#}", resolved(dir.path()).unwrap_err());
+            assert!(e.contains("write into the project"), "{entry}: {e}");
+        }
+        // Read-only, the same folder is fine: it is only read.
+        let dir = project(Some("brain:\n  - path: ./brain"));
+        assert!(resolved(dir.path()).is_ok());
+        // A symlink out of the project to a folder inside it does not get round the rule.
+        let dir = project(Some("brain:\n  - path: ../alias\n    update: true"));
+        let parent = dir.path().parent().unwrap();
+        let alias = parent.join(format!(
+            "alias-{}",
+            dir.path().file_name().unwrap().to_string_lossy()
+        ));
+        std::os::unix::fs::symlink(dir.path(), &alias).unwrap();
+        fs::write(
+            dir.path().join("AGENTS.md"),
+            agents(&format!(
+                "brain:\n  - path: {}\n    update: true",
+                alias.display()
+            )),
+        )
+        .unwrap();
+        assert!(resolved(dir.path()).is_err());
+        fs::remove_file(alias).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_does_not_exist_yet_lands_where_its_symlinked_parent_really_is() {
+        let outer = TempDir::new().unwrap();
+        let real = outer.path().join("srv/team/subdir");
+        fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, outer.path().join("link")).unwrap();
+        let got = resolve_path(&outer.path().join("link/../new-brain"));
+        assert_eq!(
+            got,
+            outer
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("srv/team/new-brain")
+        );
+        // And an existing folder resolves as canonicalize does.
+        assert_eq!(
+            resolve_path(&outer.path().join("srv/./team/../team")),
+            outer.path().canonicalize().unwrap().join("srv/team")
+        );
+    }
+
+    #[test]
+    fn the_same_folder_listed_twice_is_one_source_and_writable_if_any_entry_says_so() {
+        let outer = TempDir::new().unwrap();
+        let proj = outer.path().join("repo");
+        fs::create_dir_all(&proj).unwrap();
+        fs::create_dir(outer.path().join("brain")).unwrap();
+        fs::write(
+            proj.join("AGENTS.md"),
+            agents("brain:\n  - path: ../brain\n  - path: ../repo/../brain\n    update: true"),
+        )
+        .unwrap();
+        let r = resolved(&proj).unwrap();
+        assert_eq!(r.outside.len(), 1);
+        assert!(r.update_source().is_some());
+        assert_eq!(r.outside[0].label, "../brain");
+    }
+
+    #[test]
+    fn a_source_folder_called_project_is_not_mistaken_for_the_project() {
+        let outer = TempDir::new().unwrap();
+        let proj = outer.path().join("repo");
+        fs::create_dir_all(&proj).unwrap();
+        fs::create_dir(outer.path().join("project")).unwrap();
+        let r = resolve(
+            &proj,
+            &Flags {
+                repo: None,
+                sources: vec![PathBuf::from("../project")],
+            },
+        )
+        .unwrap();
+        assert_eq!(r.outside[0].label, "../project");
+        let r = resolve(
+            outer.path(),
+            &Flags {
+                repo: Some(proj),
+                sources: vec![PathBuf::from("project")],
+            },
+        )
+        .unwrap();
+        assert_eq!(r.outside[0].label, "./project");
+        assert_eq!(r.project.unwrap().label, PROJECT);
     }
 }
