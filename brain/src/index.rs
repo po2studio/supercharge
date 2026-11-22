@@ -16,6 +16,7 @@ use crate::{
     convert::{self, Format, Outcome},
     decisions, dedup, doc,
     embed::Embedder,
+    notes,
     sources::{Kind, Source, PROJECT_FILES},
     store::{self, FileRow, NewChunk, NewFile, Store},
 };
@@ -366,7 +367,7 @@ pub fn index(
                 continue;
             }
         }
-        let converted = match format
+        let mut converted = match format
             .cached()
             .then(|| convert::cache_get(&cache, &cache_key))
         {
@@ -378,7 +379,7 @@ pub fn index(
                         if format.cached() {
                             convert::cache_put(&cache, &cache_key, &c);
                         }
-                        c
+                        *c
                     }
                     Outcome::Unconverted(reason) => {
                         store.put_unconverted(rel, &hash, &reason)?;
@@ -395,13 +396,19 @@ pub fn index(
                 }
             }
         };
+        let (kind, meta) = entry_of(source, rel, &converted);
+        if let Some(note) = &meta.note {
+            // A note is as old as it was last checked against its sources, and is found by what
+            // it says it answers.
+            converted.date = note.verified.clone().or(converted.date);
+            converted.text = notes::indexed_text(note, &converted.text);
+        }
         let date = fallback_date(converted.date.as_ref());
         let title = converted.title.clone().unwrap_or_else(|| {
             Path::new(rel)
                 .file_stem()
                 .map_or(rel.clone(), |s| s.to_string_lossy().into_owned())
         });
-        let (kind, meta) = entry_of(source, rel, &converted);
         let count = |s: &str| embedder.count_tokens(s);
         let chunks = chunk::chunk(
             &converted.text,
@@ -473,8 +480,9 @@ pub fn index(
     Ok(report)
 }
 
-/// What a file is, and what it says about being decided or replaced. Only the files of
-/// `decisions/` and a project's ADRs carry that; a status in any other file is just text.
+/// What a file is, and what it says about being decided or replaced, or made from. Only the
+/// files of `decisions/` and a project's ADRs carry the first, and those of `notes/` the
+/// second; a status in any other file is just text.
 fn entry_of(source: &Source, rel: &str, converted: &convert::Converted) -> (String, doc::Meta) {
     match &source.kind {
         Kind::Project { docs } if doc::is_adr(rel, docs) => {
@@ -485,10 +493,15 @@ fn entry_of(source: &Source, rel: &str, converted: &convert::Converted) -> (Stri
         Kind::Project { .. } => ("raw".into(), doc::Meta::default()),
         Kind::Outside => {
             let kind = doc::kind_of(rel, &converted.meta);
-            let meta = if kind == "note" || kind == "raw" {
-                doc::Meta::default()
-            } else {
-                converted.meta.clone()
+            let meta = match kind.as_str() {
+                "raw" => doc::Meta::default(),
+                // A note says what it was made from, not whether it is decided or replaced.
+                "note" => doc::Meta {
+                    project: converted.meta.project.clone(),
+                    note: Some(converted.meta.note.clone().unwrap_or_default()),
+                    ..doc::Meta::default()
+                },
+                _ => converted.meta.clone(),
             };
             (kind, meta)
         }

@@ -18,6 +18,9 @@ pub struct Meta {
     pub superseded_by: Option<String>,
     /// The ADRs that amend this one, from its status line.
     pub amended_by: Vec<String>,
+    /// What a note's frontmatter says (kept only for the files of `notes/`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<Box<crate::notes::Note>>,
 }
 
 impl Meta {
@@ -99,8 +102,8 @@ fn list(inline: &str, following: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// Splits a leading `---` frontmatter block off and reads `title`, `date` and what a decision
-/// says about itself from it. Without frontmatter the title is the first `#` heading, if any.
+/// Splits a leading `---` frontmatter block off and reads `title`, `date`, what a decision
+/// says about itself and what a note says from it. Without frontmatter the title is the first `#` heading, if any.
 pub fn parse(text: &str) -> Parsed<'_> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut title = None;
@@ -142,6 +145,7 @@ pub fn parse(text: &str) -> Parsed<'_> {
                         _ => {}
                     }
                 }
+                meta.note = crate::notes::from_front(front).map(Box::new);
                 break;
             }
             offset += line.len();
@@ -382,6 +386,7 @@ mod tests {
                 supersedes: vec!["a".into(), "b".into()],
                 superseded_by: Some("later".into()),
                 amended_by: vec![],
+                note: None,
             }
         );
         let block = parse("---\nsupersedes:\n  - one\n  - two\nkind: process\n---\nx").meta;

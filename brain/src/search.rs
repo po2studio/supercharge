@@ -6,7 +6,7 @@ use rusqlite::{types::Value, OptionalExtension};
 use serde::Serialize;
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{doc, embed::Embedder, sources, sources::Source, store, store::Store, vecs};
+use crate::{doc, embed::Embedder, notes, sources, sources::Source, store, store::Store, vecs};
 
 /// The reciprocal-rank-fusion constant.
 const RRF_K: f64 = 60.0;
@@ -31,6 +31,8 @@ pub struct Hit {
     /// `business`, `product`, `process` or `decision` for a decision, `adr` for a project's ADR,
     /// `note`, else `raw`.
     pub kind: String,
+    /// The file's sha256: what a note records of each file it is made from.
+    pub hash: String,
     /// `proposed`, `accepted` or `superseded` for a decision or ADR, else none.
     pub status: Option<String>,
     /// The decision's project, when its frontmatter names one.
@@ -42,6 +44,7 @@ pub struct Hit {
     /// For an amended ADR: the ADRs that amend it, which come with it in the results.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub amended_by: Vec<String>,
+    /// For a note: a file it was made from has changed or is gone.
     pub stale: bool,
     pub score: f64,
     pub versions: Vec<String>,
@@ -192,6 +195,10 @@ pub struct Opened {
 }
 
 impl Opened {
+    pub fn is_project(&self) -> bool {
+        self.is_project
+    }
+
     pub fn new(source: &Source, store: Store) -> Opened {
         Opened {
             label: source.label.clone(),
@@ -217,9 +224,10 @@ pub fn search(
 }
 
 /// An accepted decision ranks one place above where relevance puts it, and above a hit it ties
-/// with; superseded ones, shown only on request, go last. More than one place puts decisions that
-/// merely resemble a question above the file that answers it: two cost 0.03 MRR on the eval.
-/// Notes join the order with slice 4.
+/// with. A fresh note takes the same lift, below a decision it ties with: the trust order is
+/// decisions, fresh notes, raw files, stale notes, with the superseded, shown only on request,
+/// after all of them. More than one place puts decisions that merely resemble a question above
+/// the file that answers it: two cost 0.03 MRR on the eval.
 const DECISION_LIFT: usize = 1;
 
 pub fn search_filtered(
@@ -250,6 +258,7 @@ pub fn search_filtered(
     // pool on its own, so the pool grows until it yields enough files or holds every match.
     // Candidates for the top `k`: those a lift can bring in.
     let window = q.k + DECISION_LIFT;
+    let notes = notes::Ctx::new(sources);
     let mut pool = (q.k * 10).max(50);
     loop {
         let mut exhausted = true;
@@ -279,21 +288,25 @@ pub fn search_filtered(
             (None, None) => unreachable!(),
         };
         let mut hits: Vec<(usize, Hit)> = Vec::new();
-        // Superseded hits (with `--all`) go last, so they don't count towards the window, unless
-        // they are what was asked for.
+        // Superseded hits (with `--all`) and stale notes go last, so they don't count towards the
+        // window, unless the superseded are what was asked for.
         let mut current = 0;
         let mut seen: std::collections::HashSet<(usize, String)> = Default::default();
         for ((n, id), score) in ranked {
             // A file that has a newer copy never ranks: the copy does, and lists it.
-            let Some(hit) = chunk_hit(&sources[n], id, score)? else {
+            let Some(mut hit) = chunk_hit(&sources[n], id, score)? else {
                 continue;
             };
             // One hit per file of a source; the label is for people, so two sources are told
             // apart by position, not by name.
             if seen.insert((n, hit.path.clone())) {
+                if hit.kind == "note" {
+                    hit.stale = notes.is_stale(n, &hit.path)?;
+                }
                 current += usize::from(
-                    hit.status.as_deref() != Some("superseded")
-                        || filter.status == Some("superseded"),
+                    !hit.stale
+                        && (hit.status.as_deref() != Some("superseded")
+                            || filter.status == Some("superseded")),
                 );
                 hits.push((n, hit));
             }
@@ -326,10 +339,14 @@ fn trusted(
         .map(|(rank, hit)| {
             let key = if hit.1.status.as_deref() == Some("superseded") {
                 (usize::MAX, 0, rank)
+            } else if hit.1.stale {
+                (usize::MAX - 1, 0, rank)
             } else if is_accepted_decision(&hit.1) {
                 (rank.saturating_sub(DECISION_LIFT), 0, rank)
+            } else if hit.1.kind == "note" {
+                (rank.saturating_sub(DECISION_LIFT), 1, rank)
             } else {
-                (rank, 1, rank)
+                (rank, 2, rank)
             };
             (key, hit)
         })
@@ -527,7 +544,7 @@ fn vector(
 fn chunk_hit(source: &Opened, id: i64, score: f64) -> Result<Option<Hit>> {
     let (hidden, mut hit) = source.store.conn.query_row(
         "SELECT f.path, f.title, c.heading, f.date, f.kind, c.text, f.project, f.status, f.superseded_by, f.amended_by, \
-         EXISTS(SELECT 1 FROM files n WHERE n.path = f.dup_of) \
+         EXISTS(SELECT 1 FROM files n WHERE n.path = f.dup_of), f.hash \
          FROM chunks c JOIN files f ON f.id = c.file_id WHERE c.id = ?1",
         [id],
         |r| {
@@ -542,6 +559,7 @@ fn chunk_hit(source: &Opened, id: i64, score: f64) -> Result<Option<Hit>> {
                 heading: r.get(2)?,
                 date: r.get(3)?,
                 kind: r.get(4)?,
+                hash: r.get(11)?,
                 status: some(r.get(7)?),
                 project: some(r.get(6)?),
                 superseded_by: some(r.get(8)?),
@@ -798,8 +816,8 @@ mod tests {
         );
         let json = serde_json::to_value(hit).unwrap();
         for k in [
-            "id", "source", "path", "file", "title", "heading", "date", "kind", "status", "stale",
-            "score", "snippet", "versions",
+            "id", "source", "path", "file", "title", "heading", "date", "kind", "hash", "status",
+            "stale", "score", "snippet", "versions",
         ] {
             assert!(json.get(k).is_some(), "{k}");
         }
@@ -1240,6 +1258,7 @@ mod tests {
                 heading: String::new(),
                 date: String::new(),
                 kind: kind.into(),
+                hash: String::new(),
                 status: status.map(String::from),
                 project: None,
                 superseded_by: None,
@@ -1292,6 +1311,37 @@ mod tests {
             entry("nostatus", "decision", None, false),
         ];
         assert_eq!(ordered(hits, 4), ["prop", "raw", "nostatus", "sup"]);
+    }
+
+    #[test]
+    fn fresh_notes_join_the_order_below_decisions_and_stale_ones_go_below_the_raw_files() {
+        let raw = |p: &str| entry(p, "raw", None, false);
+        let note = |p: &str| entry(p, "note", None, false);
+        // A fresh note moves up one place, like a decision.
+        let hits = vec![raw("r0"), raw("r1"), note("n"), raw("r3")];
+        assert_eq!(ordered(hits, 4), ["r0", "n", "r1", "r3"]);
+        // On a tie a decision comes first, then the note, then the raw file.
+        let hits = vec![
+            raw("r0"),
+            note("n"),
+            entry("dec", "product", Some("accepted"), false),
+        ];
+        assert_eq!(ordered(hits, 3), ["n", "r0", "dec"]);
+        let hits = vec![
+            raw("r0"),
+            entry("dec", "product", Some("accepted"), false),
+            raw("r2"),
+            note("n"),
+        ];
+        assert_eq!(ordered(hits, 4), ["dec", "r0", "n", "r2"]);
+        // A stale note goes below the raw files, and above a superseded decision.
+        let hits = vec![
+            entry("sup", "product", Some("superseded"), false),
+            entry("stale", "note", None, true),
+            raw("r2"),
+            raw("r3"),
+        ];
+        assert_eq!(ordered(hits, 4), ["r2", "r3", "stale", "sup"]);
     }
 
     #[test]

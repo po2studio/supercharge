@@ -7,7 +7,7 @@ use std::{fs, path::Path, time::Instant};
 
 use crate::{
     embed::Embedder,
-    index,
+    index, notes,
     search::{self, Opened, Query},
     sources::{self, Source},
     store::Store,
@@ -155,6 +155,21 @@ pub fn measure(
     }
     let secs = started.elapsed().as_secs_f64();
     let report = (files, chunks, embedded);
+
+    // A note a question expects must be fresh, or the question would test the trap, not the note.
+    let ctx = notes::Ctx::new(&opened);
+    for q in &questions {
+        for e in &q.expect {
+            if let Some(n) = opened.iter().position(|o| !o.is_project()) {
+                if e.starts_with("notes/") && ctx.is_stale(n, e)? {
+                    bail!(
+                        "question {} expects {e}, which is stale: rerun brain/scripts/make-eval-notes.py",
+                        q.id
+                    );
+                }
+            }
+        }
+    }
 
     let (mut sums, mut latencies) = ([(0.0, 0.0); 3], Vec::new());
     let mut returned: Vec<String> = Vec::new();

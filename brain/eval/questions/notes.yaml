@@ -1,0 +1,31 @@
+# Notes: what an agent wrote after answering from several files. A fresh note answers its question
+# and ranks first; a stale one (its source changed, or is gone) is the trap: it still says what
+# the raw files used to, so `absent` names it, and the raw file must answer.
+# eval/corpus/notes/ is written by brain/scripts/make-eval-notes.py.
+- id: note-trip-limits
+  question: "Which approval and meal limits apply when I travel abroad for work?"
+  terms: "approval OR meals OR travel"
+  expect: [notes/trip-limits.md]
+  answer: "Written approval ten days ahead; EUR 45 a day for meals abroad; ISK 22,000 a night for a Reykjavik hotel."
+- id: note-home-office
+  question: "What are the rules and the allowances for working from home?"
+  terms: "home OR remote OR allowance"
+  expect: [notes/working-from-home.md]
+  answer: "Three days a week, reachable 10:00-15:00; ISK 60,000 once and ISK 5,000 a month for internet."
+- id: note-puffin-lead
+  question: "Who leads the database migration and what did they do before joining Hrafn?"
+  terms: "Puffin OR migration OR lead"
+  expect: [notes/puffin-lead-background.md]
+  answer: "Guðmundur Ólafsson; seven years at Kolibri Systems in Copenhagen."
+- id: note-stale-sick
+  question: "Do I need a doctor's note if I'm ill for just one day?"
+  terms: "ill OR sick OR leave OR days OR staff"
+  expect: [policies/sick-leave.md]
+  absent: [notes/sick-leave-summary.md]
+  answer: "No: two days need only notice to the team lead; the note's first-day rule is out of date."
+- id: note-gone-hotel
+  question: "How much can the company pay per night for a hotel in Reykjavik?"
+  terms: "hotel OR night OR Reykjavik"
+  expect: [policies/travel-expenses.md]
+  absent: [notes/hotel-cap-2023.md]
+  answer: "ISK 22,000; the note's 18,000 came from a policy that no longer exists."

@@ -90,7 +90,7 @@ source: https://github.com/…/issues/42     # where it was decided
 ```
 The body has context, decision, alternatives and consequences, in a few lines. Once a decision is accepted, only `status` and `superseded-by` may change. To change a decision, write a new one.
 
-**Note frontmatter:** `title`, `summary` (one line), `aliases`, `questions` (the questions it answers), `sources: [{path, hash}]`, `verified` (date), and optionally `project` and `touches`. A note is stale when any source's hash differs or the source is gone.
+**Note frontmatter:** `title`, `summary` (one line), `aliases`, `questions` (the questions it answers), `sources: [{path, hash}]`, `verified` (date), and optionally `project` and `touches`. A source's `path` is `<source>:<path>`, the source as a hit labels it (`project`, or the path as listed in `brain:`) and the file's path in it; a file of the note's own source needs no source. Its `hash` is the sha256 of the file. A note is stale when any source's hash differs or the source is gone; a note with no source is stale too.
 
 **Notes.** A note holds what's expensive to get from the raw files (a 40-page policy → its ten rules; an answer that took five documents), never how the code works. Notes are written on demand: by `/brain` when an answer had to synthesise several files. The ship step's lint and `/brain refresh` refresh, merge or delete existing notes and write none. Nothing turns raw files into notes wholesale.
 
