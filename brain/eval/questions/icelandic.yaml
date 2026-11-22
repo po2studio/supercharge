@@ -2,6 +2,7 @@
   question: "Hversu marga daga í viku má ég vinna að heiman?"
   terms: "heiman OR heimavinna OR vinna"
   expect: [icelandic/heimavinna.md, policies/remote-work.md]
+  accept: [notes/working-from-home.md]
   answer: "Allt að þremur dögum í viku."
 - id: is-office-move
   question: "Hvenær flytur fyrirtækið á Fiskislóð?"
@@ -57,6 +58,7 @@
   question: "Hver er hámarkið fyrir hótelgistingu í Reykjavík á nótt?"
   terms: "hótel OR gisting OR hámark"
   expect: [policies/travel-expenses.md]
+  accept: [notes/trip-limits.md]
   answer: "22.000 krónur á nótt (ISK 22,000)."
 - id: is-ceo
   question: "Hver er forstjóri Hrafns?"

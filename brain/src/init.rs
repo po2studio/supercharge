@@ -17,6 +17,7 @@ Everything here is raw, and agents never edit it, except what agents own:
 - `decisions/`: business, product and process decisions, one file each, named `YYYY-MM-DD-slug.md`.
 - `notes/`: summaries agents wrote, each naming the files it came from.
 - `projects/`: one file per project, the last commit the agents reconciled.
+- `.github/workflows/brain.yml`: the CI check, when this folder is a GitHub repo.
 
 The search index is not kept here; it lives under `~/.cache/supercharge/` on each machine.
 ";

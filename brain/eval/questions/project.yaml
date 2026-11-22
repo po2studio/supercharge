@@ -34,4 +34,5 @@
   question: "What is the maximum I can claim for a hotel when travelling?"
   terms: "hotel OR travelling OR claim"
   expect: [policies/travel-expenses.md]
+  accept: [notes/trip-limits.md]
   answer: "The travel expenses policy sets the limits."

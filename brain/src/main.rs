@@ -1,3 +1,4 @@
+mod check;
 mod chunk;
 mod convert;
 mod decisions;
@@ -83,6 +84,21 @@ enum Command {
     },
     /// In the `update: true` source, create BRAIN.md, decisions/, notes/ and projects/ if missing. The only command that writes into a source.
     Init,
+    /// Check the files agents own in the brain (the `update: true` source, or the folder you are in
+    /// when it has a BRAIN.md): frontmatter, links, and accepted decisions left as they were
+    /// accepted (by git history). Stale notes and `touches:` that match no file only warn. Exits
+    /// 1 on a failure. With --changed, list the decisions and notes whose `touches:` match instead.
+    Check {
+        /// The project the `touches:` globs are in; by default this one, by its repo name.
+        #[arg(long)]
+        project: Option<String>,
+        /// Paths of the project, or one commit range (`abc123..HEAD`) for every path its commits
+        /// touched: list the decisions and notes whose `touches:` match, and warn on dangling ones.
+        #[arg(long, num_args = 1.., value_name = "PATH or RANGE")]
+        changed: Option<Vec<String>>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Index a corpus, ask its golden questions, report recall@5, MRR, latency and speed; fail on a regression.
     Eval {
         /// The outside source.
@@ -338,6 +354,22 @@ fn run() -> Result<()> {
                 println!("{}: created {}", source.label, created.join(", "));
             }
         }
+        Command::Check {
+            project,
+            changed,
+            json,
+        } => {
+            let resolved = resolve(&cli)?;
+            let report = check_brain(&cli, &resolved, project.as_deref(), changed.clone())?;
+            if *json {
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                print!("{}", report.render());
+            }
+            if !report.failures.is_empty() {
+                std::process::exit(1);
+            }
+        }
         Command::Eval {
             corpus,
             project,
@@ -364,6 +396,54 @@ fn run() -> Result<()> {
         Command::Center { corpus, out } => center(corpus, out)?,
     }
     Ok(())
+}
+
+/// `check` on the brain this project writes to: the `--source` given, else its `update: true`
+/// source, else the folder itself when that is a brain (the brain repo's CI).
+fn check_brain(
+    cli: &Cli,
+    resolved: &Resolved,
+    project: Option<&str>,
+    changed: Option<Vec<String>>,
+) -> Result<check::Report> {
+    let found = if !cli.source.is_empty() {
+        resolved.outside.first()
+    } else if let Some(update) = resolved.update_source() {
+        Some(update)
+    } else {
+        resolved
+            .project
+            .as_ref()
+            .filter(|p| p.root.join("BRAIN.md").is_file())
+    };
+    let brain = found.context("no brain to check: no source of this project sets `update: true` (inside a brain's own folder, with a BRAIN.md, it is checked as it is)")?;
+    if !brain.exists {
+        bail!("the brain {} is not a folder on this machine", brain.label);
+    }
+    // The project is another folder than the brain; in the brain repo's CI there is none.
+    let project_source = resolved.project.as_ref().filter(|p| p.root != brain.root);
+    let project = match (project_source, project) {
+        (Some(p), name) => Some(check::Project {
+            name: name.map_or_else(|| sources::project_name(&p.root), str::to_string),
+            root: p.root.clone(),
+        }),
+        (None, Some(_)) => {
+            bail!("--project needs the project's folder: run inside the project, or give --repo")
+        }
+        (None, None) => None,
+    };
+    let cited = resolved
+        .outside
+        .iter()
+        .chain(project_source)
+        .map(|s| (s.label.clone(), s.exists.then(|| s.root.clone())))
+        .collect();
+    check::run(&check::Opts {
+        brain: &brain.root,
+        sources: cited,
+        project,
+        changed,
+    })
 }
 
 fn stats(resolved: &Resolved, json: bool) -> Result<()> {

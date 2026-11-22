@@ -100,7 +100,7 @@ fn yaml(text: &str) -> Option<serde_yaml_ng::Value> {
 
 /// The frontmatter with every plain value that holds `: ` quoted, which agents write often
 /// (`title: Business trips: approval and meals`) and YAML reads as a mistake.
-fn requoted(front: &str) -> String {
+pub(crate) fn requoted(front: &str) -> String {
     let quote = |v: &str| -> String {
         let v = v.trim();
         if v.contains(": ") && !v.starts_with(['"', '\'', '[', '{', '|', '>']) {
@@ -186,7 +186,7 @@ pub struct Ctx<'a> {
 }
 
 /// The sha256 of a regular file, read in blocks; a file that isn't one (or can't be read) has none.
-fn sha_of_file(path: &Path) -> Option<String> {
+pub(crate) fn sha_of_file(path: &Path) -> Option<String> {
     // Looked at before it is opened: opening a pipe would wait for a writer.
     if !fs::metadata(path).ok()?.is_file() {
         return None;

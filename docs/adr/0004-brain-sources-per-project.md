@@ -18,7 +18,7 @@ Status: accepted
     - path: ~/Dropbox/ClientA/Policies
   ```
   `/brain` never writes the key, and no skill asks for it as missing.
-- **`update` defaults to `false`.** At most one source per project sets `update: true`. Only there do agents write, and only their own files: `BRAIN.md`, `decisions/`, `notes/` and `projects/`. Raw files are never edited in any source. With no `update: true` source, the brain writes no documents anywhere.
+- **`update` defaults to `false`.** At most one source per project sets `update: true`. Only there do agents write, and only their own files: `BRAIN.md`, `decisions/`, `notes/`, `projects/` and, when it is a GitHub repo, its CI workflow `.github/workflows/brain.yml`. Raw files are never edited in any source. With no `update: true` source, the brain writes no documents anywhere.
 - **One index per source** under `~/.cache/supercharge/index/<source-hash>/` (the project's docs count as one source), so projects that list the same source share its index. A search covers only the current project and the sources it lists.
 
 The rest of 0003 stands: raw files are the truth; notes and the index are derived; writes to a git source are commits pushed to its default branch, gated by lint and `brain check`. "Per brain" in [ADR 0002](0002-local-embeddings-one-sqlite-index.md) reads "per source".

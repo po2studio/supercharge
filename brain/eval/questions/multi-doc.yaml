@@ -2,11 +2,13 @@
   question: "I am going to Hamburg for 3 days: how early must the trip be approved and how much can I claim for meals per day?"
   terms: "Hamburg OR approved OR meals"
   expect: [policies/travel-expenses.md, policies/expenses.md]
+  accept: [notes/trip-limits.md]
   answer: "Approval at least 10 days before departure; meals abroad are a flat EUR 45 per day."
 - id: multi-puffin-lead
   question: "Where did the lead of Project Puffin work before joining Hrafn?"
   terms: "Puffin AND lead"
   expect: [product/project-puffin.md, people/bio-gudmundur.md]
+  accept: [notes/puffin-lead-background.md]
   answer: "Guðmundur Ólafsson leads Puffin; he previously worked at Kolibri Systems in Copenhagen."
 - id: multi-nordic-sla
   question: "Which uptime guarantee does Nordic Wanderers have, and how fast must we respond to a P1 ticket?"
@@ -37,4 +39,5 @@
   question: "When must I be reachable on home-office days and how much does Hrafn contribute to my home internet?"
   terms: "\"home-office\" OR internet OR reachable"
   expect: [policies/remote-work.md, policies/home-office-allowance.md, icelandic/heimavinna.md]
+  accept: [notes/working-from-home.md]
   answer: "Core hours 10:00 to 15:00; ISK 5,000 per month towards internet."

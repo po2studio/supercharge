@@ -22,6 +22,7 @@
   question: "Where did Guðmundur Ólafsson work before Hrafn?"
   terms: "\"Guðmundur Ólafsson\""
   expect: [people/bio-gudmundur.md]
+  accept: [notes/puffin-lead-background.md]
   answer: "Kolibri Systems, a Copenhagen logistics software firm, for seven years."
 - id: puffin-cutover
   question: "When is the Project Puffin database cutover?"

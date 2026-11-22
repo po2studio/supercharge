@@ -68,7 +68,8 @@ Medium (default). This is the first runnable code in the bundle, so the binary g
   - `BRAIN.md`: conventions and format version, short.
   - `decisions/YYYY-MM-DD-slug.md`: business, product and process decisions. Named by date, not number, because many projects and sessions write to one source. Architecture decisions stay as ADRs in each project's `docs/adr/`.
   - `notes/*.md`: written by agents.
-  - `projects/<project>.yaml`: the last commit of that project the ship step reconciled.
+  - `projects/<project>.yaml`: `commit:`, the last commit of that project the ship step reconciled, and `reconciled:`, its date.
+  - `.github/workflows/brain.yml`: only when the source is a GitHub repo, the CI check (slice 5).
 - **Everything else is raw,** in every source: any files, any folders, flat or nested. Agents never edit raw files. Nothing per machine is written into a source: the index and caches live under `~/.cache/supercharge/`, since a source may be a synced folder.
 - **Separation:** a search covers only the current project and the sources it lists, so organisations stay apart.
 - **The brain repo** below means the `update: true` source when it's a GitHub repo.
@@ -331,9 +332,11 @@ Shipped 2026-11-21 ([#65](https://github.com/po2studio/supercharge/pull/65)). It
 - **`brain check`** fails (with file and reason) on any of: invalid decision or note frontmatter, including `touches` without `project`; broken links; an accepted decision whose body was edited (checked against git history when the brain is a git repo). Stale notes are a warning, not a failure.
 - **`brain check --changed <paths or commit range> --project <name>`** lists the decisions and notes whose `touches:` match, and warns on entries whose `touches:` match no file in the project (dangling).
 - **`brain` skill:**
-  - when the `update: true` source is a GitHub repo (the brain repo), setup adds a CI workflow to it that downloads the pinned binary, runs `brain check`, and keeps one open issue listing stale notes, starting `/brain refresh` (closed once none are left);
+  - when the `update: true` source is a GitHub repo (the brain repo), setup adds a CI workflow to it that downloads the pinned binary, runs `brain check`, and keeps one open issue listing stale notes, starting `/brain refresh` (closed once none are left). In CI it sees only the brain's own files, so a note made from a file of a project or another source is judged by the ship step and `/brain refresh`;
   - the ship step gains: `--changed` over every commit since the project's reconciled commit (`projects/<project>.yaml`), not just the PR's; applying the updates the PRs listed (`drive-feature`'s final PR combines its slices' `brain:` lines); superseding or retargeting dangling entries; recording the new reconciled commit; and ending the report with `brain: N stale, N dangling touches, N duplicates`.
 - **`build-slice`, with the `brain` skill installed** (its one line points at `brain`, which says): before removing or reworking code whose purpose isn't clear from the code or tests, search the brain for why and cite it in the decision ledger; before opening the PR, run `--changed` with the PR's paths, and the PR body lists the matched entries for the ship step to update (a decision by superseding it), or says `brain: unchanged` and why. It writes nothing to the brain itself.
+- **Commit what is created** (human-approved addition, 2026-11-22): `brain init` creates `BRAIN.md` in the `update: true` source, but the skill's write step added only the files it wrote, so `BRAIN.md` stayed untracked. Every agent-owned file `init` or the skill creates (`BRAIN.md`, the CI workflow) is committed and pushed as soon as it exists, even when nothing else is written.
+- **Eval: a fresh note answers too** (human-approved addition, 2026-11-22): a question may name in `accept` a fresh note that answers it; one of them in the top 5 counts as a right answer beside the raw files in `expect`. Notes rank above the files they summarise, so with only the raw files expected they lowered hybrid recall (0.884 → 0.856 on CI). The PR reports the before and after.
 
 **Acceptance criteria** (feature AC 6, 10, and 5 for the brain repo's issue)
 1. Each failure case above makes `brain check` exit non-zero, naming the file and reason. A stale note only warns.
@@ -344,9 +347,11 @@ Shipped 2026-11-21 ([#65](https://github.com/po2studio/supercharge/pull/65)). It
 6. A commit pushed to `main` outside the skills is caught by the next ship step's `--changed`.
 7. A decision whose `touches:` match no file is flagged by `check --project` and superseded or retargeted at the next ship.
 8. Every ship report ends with the brain's health line.
+9. After `brain init` creates `BRAIN.md` in an `update: true` source that is a git repo, the skill commits and pushes it, and the workflow too: nothing `init` or the skill created stays untracked.
+10. A question whose `accept` names a fresh note counts the note as a right answer; an accepted note that is missing or stale fails the eval. The PR shows before and after.
 
 **Dependencies:** after 4. **Build with:** nothing.
-**Touches:** `brain/` (`check`), `skills/brain` (brain-repo CI template, setup, ship step, the `build-slice` rules), README Brain section.
+**Touches:** `brain/` (`check`, the eval's `accept`), `brain/eval/`, `skills/brain` (brain-repo CI template, setup, ship step, the `build-slice` rules), the one brain line in `skills/build-slice` and `skills/drive-feature`, `docs/adr/0004-brain-sources-per-project.md` (the workflow among the files agents own), README Brain section.
 
 ### Slice 6: Big brains: build the index once, everyone pulls
 **Delivers:**

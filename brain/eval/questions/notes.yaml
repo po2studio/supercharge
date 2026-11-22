@@ -1,6 +1,8 @@
 # Notes: what an agent wrote after answering from several files. A fresh note answers its question
 # and ranks first; a stale one (its source changed, or is gone) is the trap: it still says what
-# the raw files used to, so `absent` names it, and the raw file must answer.
+# the raw files used to, so `absent` names it, and the raw file must answer. A question another file
+# of the corpus answers names a fresh note that says the same in `accept`, which is a right answer
+# as well as `expect` (a note is made from raw files, and ranks above them).
 # eval/corpus/notes/ is written by brain/scripts/make-eval-notes.py.
 - id: note-trip-limits
   question: "Which approval and meal limits apply when I travel abroad for work?"
@@ -27,5 +29,6 @@
   question: "How much can the company pay per night for a hotel in Reykjavik?"
   terms: "hotel OR night OR Reykjavik"
   expect: [policies/travel-expenses.md]
+  accept: [notes/trip-limits.md]
   absent: [notes/hotel-cap-2023.md]
   answer: "ISK 22,000; the note's 18,000 came from a policy that no longer exists."

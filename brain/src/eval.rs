@@ -24,6 +24,10 @@ struct Question {
     question: String,
     terms: Option<String>,
     expect: Vec<String>,
+    /// Files that answer the question as well as `expect` does: a fresh note that summarises the
+    /// raw files. One of them in the top 5 is a right answer, and its rank counts like theirs.
+    #[serde(default)]
+    accept: Vec<String>,
     /// Files that must not be among the top 5 hits: what a decision superseded, or an older version
     /// of the answer.
     #[serde(default)]
@@ -127,7 +131,7 @@ pub fn measure(
         })
         .collect::<Result<_>>()?;
     for q in &questions {
-        for e in q.expect.iter().chain(&q.absent) {
+        for e in q.expect.iter().chain(&q.accept).chain(&q.absent) {
             let (want_project, path) = match e.strip_prefix("project:") {
                 Some(p) => (true, p),
                 None => (false, e.as_str()),
@@ -159,7 +163,7 @@ pub fn measure(
     // A note a question expects must be fresh, or the question would test the trap, not the note.
     let ctx = notes::Ctx::new(&opened);
     for q in &questions {
-        for e in &q.expect {
+        for e in q.expect.iter().chain(&q.accept) {
             if let Some(n) = opened.iter().position(|o| !o.is_project()) {
                 if e.starts_with("notes/") && ctx.is_stale(n, e)? {
                     bail!(
@@ -214,20 +218,21 @@ pub fn measure(
                 .iter()
                 .filter(|e| rank_of(e).is_some_and(|r| r < 5))
                 .count();
-            sums[i].0 += found as f64 / q.expect.len() as f64;
-            sums[i].1 += q
+            // A note that answers it counts for every file it summarises.
+            let accepted = q.accept.iter().any(|a| rank_of(a).is_some_and(|r| r < 5));
+            sums[i].0 += if accepted {
+                1.0
+            } else {
+                found as f64 / q.expect.len() as f64
+            };
+            let first = q
                 .expect
                 .iter()
+                .chain(&q.accept)
                 .filter_map(|e| rank_of(e))
-                .min()
-                .map_or(0.0, |r| 1.0 / (r as f64 + 1.0));
-            ranks.push(
-                q.expect
-                    .iter()
-                    .filter_map(|e| rank_of(e))
-                    .min()
-                    .map_or("-".to_string(), |r| (r + 1).to_string()),
-            );
+                .min();
+            sums[i].1 += first.map_or(0.0, |r| 1.0 / (r as f64 + 1.0));
+            ranks.push(first.map_or("-".to_string(), |r| (r + 1).to_string()));
         }
         if details {
             eprintln!(
