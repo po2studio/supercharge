@@ -1,19 +1,19 @@
 {
-  "questions": 56,
+  "questions": 62,
   "sources": 2,
-  "files": 100,
-  "chunks": 141,
+  "files": 111,
+  "chunks": 152,
   "terms": {
-    "recall_at_5": 0.622,
-    "mrr": 0.672
+    "recall_at_5": 0.675,
+    "mrr": 0.705
   },
   "about": {
-    "recall_at_5": 0.884,
-    "mrr": 0.871
+    "recall_at_5": 0.895,
+    "mrr": 0.841
   },
   "hybrid": {
-    "recall_at_5": 0.827,
-    "mrr": 0.795
+    "recall_at_5": 0.844,
+    "mrr": 0.796
   },
   "p50_ms": 3.176,
   "chunks_per_s": 42.6

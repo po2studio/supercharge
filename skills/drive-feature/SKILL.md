@@ -28,6 +28,7 @@ Don't build slices yourself.
 - Check that the docs describe what actually shipped: PRODUCT, ARCHITECTURE, ADRs, the feature doc. Fix any drift you find in them, including drift from before this feature. Check new ADRs against older ones; supersede any they contradict. Where docs conflict on a product rule, say which rule the code follows today, and flag it.
 - Then run the `living-docs` skill yourself, not in a subagent, on the feature branch, even if the docs look current. Set the status to `shipped`; after that nothing updates the doc.
 - Open one PR from the feature branch into `main`, with the report as its description, `Closes #N` for the feature issue if there is one, and the checks only a human can do (real devices, real files) as a checklist. If `approve` includes `merge`, stop for the human's approval; once they approve, check CI is green, merge it yourself, and clean up the branches and worktrees this run created, never the worktree your own session runs in or the branch checked out there. Otherwise merge it once CI passes.
+- After the final PR merges into `main`, run the `brain` skill's ship step, if that skill is installed and its binary already cached, giving it the feature doc and the merged PRs, and add its report to yours.
 - Hand back one report:
   - what shipped, with links
   - the combined decision ledger

@@ -1,4 +1,5 @@
 mod chunk;
+mod decisions;
 mod doc;
 mod embed;
 mod eval;
@@ -54,6 +55,21 @@ enum Command {
         about: Option<String>,
         #[arg(short, default_value_t = 5)]
         k: usize,
+        /// Only this kind of entry: decision (any kind of decision, ADRs included), business, product, process, adr, note or raw.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only decisions of this project (a project's own docs count as its own).
+        #[arg(long)]
+        project: Option<String>,
+        /// Only entries dated YYYY-MM-DD or later.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only entries with this status: proposed, accepted or superseded.
+        #[arg(long)]
+        status: Option<String>,
+        /// Include superseded decisions and ADRs, marked, with what replaced them.
+        #[arg(long)]
+        all: bool,
         #[arg(long)]
         json: bool,
     },
@@ -170,6 +186,11 @@ fn run() -> Result<()> {
             terms,
             about,
             k,
+            kind,
+            project,
+            since,
+            status,
+            all,
             json,
         } => {
             let resolved = resolve(&cli)?;
@@ -188,15 +209,29 @@ fn run() -> Result<()> {
                 about: about.as_deref(),
                 k: *k,
             };
+            let filter = search::Filter {
+                kind: kind.as_deref(),
+                project: project.as_deref(),
+                since: since.as_deref(),
+                status: status.as_deref(),
+                all: *all,
+            };
             let hits = if about.is_some() {
-                search::search(
+                search::search_filtered(
                     &opened,
                     &mut embed::Onnx::load()?,
                     &query,
+                    &filter,
                     search::EXACT_LIMIT,
                 )?
             } else {
-                search::search(&opened, &mut NoEmbedder, &query, search::EXACT_LIMIT)?
+                search::search_filtered(
+                    &opened,
+                    &mut NoEmbedder,
+                    &query,
+                    &filter,
+                    search::EXACT_LIMIT,
+                )?
             };
             if *json {
                 // One hit per line, so a tool that cuts long lines never swallows later hits.
@@ -212,14 +247,24 @@ fn run() -> Result<()> {
                     } else {
                         format!(" › {}", h.heading)
                     };
+                    // What a decision or ADR is today: its status, or what replaced it.
+                    let mut notes = match (&h.superseded_by, h.status.as_deref()) {
+                        (Some(by), _) => format!("; superseded by {by}"),
+                        (None, Some(status)) => format!("; {status}"),
+                        (None, None) => String::new(),
+                    };
+                    if !h.amended_by.is_empty() {
+                        notes += &format!("; amended by {}", h.amended_by.join(", "));
+                    }
                     println!(
-                        "{}. [{}] {}{} ({}, score {:.3})",
+                        "{}. [{}] {}{} ({}, score {:.3}{})",
                         i + 1,
                         h.source,
                         h.path,
                         heading,
                         h.date,
-                        h.score
+                        h.score,
+                        notes
                     );
                     for line in search::wrap(&h.snippet, 100) {
                         println!("   {line}");

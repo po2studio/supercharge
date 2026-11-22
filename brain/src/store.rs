@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{chunk, embed, vecs};
+use crate::{chunk, doc::Meta, embed, vecs};
 
 const SCHEMA: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -19,7 +19,14 @@ CREATE TABLE files (
     hash TEXT NOT NULL,
     title TEXT NOT NULL,
     date TEXT NOT NULL,
-    kind TEXT NOT NULL
+    kind TEXT NOT NULL,
+    project TEXT NOT NULL DEFAULT '',
+    -- What a decision or ADR says (see `decisions::resolve`): `status` and the two links are what
+    -- search reads; `meta` is what the file itself declared.
+    status TEXT NOT NULL DEFAULT '',
+    superseded_by TEXT NOT NULL DEFAULT '',
+    amended_by TEXT NOT NULL DEFAULT '',
+    meta TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE chunks (
     id INTEGER PRIMARY KEY,
@@ -32,6 +39,7 @@ CREATE TABLE chunks (
     code BLOB NOT NULL
 );
 CREATE INDEX chunks_file ON chunks(file_id);
+CREATE INDEX files_status ON files(status);
 CREATE VIRTUAL TABLE fts USING fts5(header, body, tokenize = 'unicode61 remove_diacritics 2');
 ";
 
@@ -54,6 +62,7 @@ pub struct NewFile {
     pub title: String,
     pub date: String,
     pub kind: String,
+    pub meta: Meta,
     pub chunks: Vec<NewChunk>,
 }
 
@@ -80,8 +89,13 @@ pub fn index_path(key: &str) -> Result<PathBuf> {
         .join("index.sqlite"))
 }
 
-fn expected_meta() -> [(&'static str, String); 3] {
+fn expected_meta() -> [(&'static str, String); 4] {
     [
+        // Any change to the tables rebuilds the index, with no version to remember to bump.
+        (
+            "schema",
+            format!("{:x}", Sha256::digest(SCHEMA.as_bytes()))[..16].to_string(),
+        ),
         ("model_id", embed::MODEL_ID.to_string()),
         ("binary_version", env!("CARGO_PKG_VERSION").to_string()),
         ("chunker_version", chunk::VERSION.to_string()),
@@ -205,8 +219,23 @@ impl Store {
         for file in files {
             remove(&tx, &file.path)?;
             tx.execute(
-                "INSERT INTO files(path, hash, title, date, kind) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![file.path, file.hash, file.title, file.date, file.kind],
+                "INSERT INTO files(path, hash, title, date, kind, project, status, superseded_by, amended_by, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    file.path,
+                    file.hash,
+                    file.title,
+                    file.date,
+                    file.kind,
+                    file.meta.project.as_deref().unwrap_or_default(),
+                    file.meta.status.as_deref().unwrap_or_default(),
+                    file.meta.superseded_by.as_deref().unwrap_or_default(),
+                    file.meta.amended_by.join("\n"),
+                    if file.meta.is_empty() {
+                        String::new()
+                    } else {
+                        serde_json::to_string(&file.meta)?
+                    },
+                ],
             )?;
             let file_id = tx.last_insert_rowid();
             for (ord, c) in file.chunks.iter().enumerate() {
@@ -275,6 +304,7 @@ mod tests {
             title: "T".into(),
             date: "2024-01-01".into(),
             kind: "raw".into(),
+            meta: Meta::default(),
             chunks: texts
                 .iter()
                 .map(|t| {
