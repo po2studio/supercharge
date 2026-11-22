@@ -5,7 +5,7 @@ Slice 6 of feature 0002. The binary built from the slice's branch (`brain` 0.6.0
 ## Machine and method
 
 - **Local machine:** AMD Ryzen 7 5700G (6 cores, no SMT), 15 GB RAM, Linux, shared with the owner's other work (so speeds are noisy: indexing ran from 8.3 to 14.6 chunks/s across runs of the same code). The binary was built at opt-level 1 in an `ubuntu:22.04` container capped at 6 GB, because the host has no C compiler and little spare memory; a release build is faster only in the Rust code, and the embedding model's speed is ONNX Runtime's, not the crate's. Every run used a throwaway cache folder; nothing under `~/.config` or `~/.cache/supercharge/`.
-- **CI:** GitHub-hosted `ubuntu-latest`. The workflow was the skill's `brain-ci.yml` unchanged except for its four placeholders, filled with this repo, a release (`test-bin`) holding the locally built 0.6.0 binary and its sha256, because the 0.6.0 release did not exist yet.
+- **CI:** GitHub-hosted `ubuntu-latest`. The workflow was the skill's `brain-ci.yml` unchanged except for its four placeholders, filled with this repo, a release (`test-bin`) holding the locally built 0.6.0 binary and its sha256, because the 0.6.0 release did not exist yet; the last row below repeats it with the released binary.
 
 ## The shared index, through GitHub
 
@@ -16,6 +16,7 @@ Slice 6 of feature 0002. The binary built from the slice's branch (`brain` 0.6.0
 | Push of another changed file | same: 1 chunk embedded, previous index started from, older asset deleted |
 | A commit pushed with `[skip ci]` (so newer than the newest index) and a fresh clone of the repo, listed by a throwaway project | `brain index`: `pulled the shared index built at 8a13533ffd24`, then `1 files changed, 1 chunks embedded` for the file that differed, and the project's docs built locally (they are never shared); 3.3 s in all, mostly loading the model. `brain stats` says which commit the index started from. `brain search --terms parking` found the file that only the delta held |
 | The same with `HTTPS_PROXY` pointing nowhere | `brain: <brain>: no shared index (gh said: Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused); building the index locally`, then all 6 files embedded locally |
+| After the release: the workflow filled from `brain.json`'s real pins (`po2studio/supercharge`, `brain-v0.6.0`, the linux-x64 sha256), one more changed file | run green; `started_from` the previous commit's index, `embedded: 1`; the newest two indexes kept |
 | Creating the `test-bin` and `brain-index` releases | each pushed a tag, which started the workflow once on that tag; the `index` and stale-issue steps are limited to the default branch, so only `check` ran |
 
 The tests (`brain/tests/shared.rs`) cover what the real run cannot easily: another model or binary version (named right but built by another version inside) ignored, a partial upload (a part missing) never pulled, an index in several parts, no `gh`, and a folder that is no brain repo never asking GitHub.
