@@ -1,11 +1,36 @@
-//! What a text file says about itself: frontmatter, title, date.
+//! What a text file says about itself: frontmatter, title, date, and what it says about being
+//! decided, replaced or amended.
 
+use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
+
+/// What a decision's frontmatter, or an ADR's status line, says about it. Empty for most files.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Meta {
+    /// `business`, `product` or `process`.
+    pub kind: Option<String>,
+    pub project: Option<String>,
+    /// `proposed`, `accepted` or `superseded`.
+    pub status: Option<String>,
+    /// Names of the decisions this one replaces.
+    pub supersedes: Vec<String>,
+    /// The name of the decision that replaced this one.
+    pub superseded_by: Option<String>,
+    /// The ADRs that amend this one, from its status line.
+    pub amended_by: Vec<String>,
+}
+
+impl Meta {
+    pub fn is_empty(&self) -> bool {
+        *self == Meta::default()
+    }
+}
 
 pub struct Parsed<'a> {
     pub body: &'a str,
     pub title: Option<String>,
     pub date: Option<String>,
+    pub meta: Meta,
 }
 
 /// Titles and headings go into every chunk's header; a line of megabytes must not.
@@ -15,12 +40,37 @@ pub fn clip(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
-/// Splits a leading `---` frontmatter block off and reads `title` and `date` from it.
-/// Without frontmatter the title is the first `#` heading, if any.
+fn unquote(v: &str) -> &str {
+    v.trim().trim_matches(|c| c == '"' || c == '\'').trim()
+}
+
+/// A frontmatter list: `[a, b]` on the line, or `- a` lines after an empty value.
+fn list(inline: &str, following: &[&str]) -> Vec<String> {
+    let inline = inline.trim();
+    let items: Vec<&str> = if let Some(inner) = inline.strip_prefix('[') {
+        inner.trim_end().trim_end_matches(']').split(',').collect()
+    } else if inline.is_empty() {
+        following
+            .iter()
+            .map_while(|l| l.trim_start().strip_prefix("- "))
+            .collect()
+    } else {
+        vec![inline]
+    };
+    items
+        .into_iter()
+        .map(|i| unquote(i).to_string())
+        .filter(|i| !i.is_empty())
+        .collect()
+}
+
+/// Splits a leading `---` frontmatter block off and reads `title`, `date` and what a decision
+/// says about itself from it. Without frontmatter the title is the first `#` heading, if any.
 pub fn parse(text: &str) -> Parsed<'_> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut title = None;
     let mut date = None;
+    let mut meta = Meta::default();
     let mut body = text;
     if let Some(rest) = text
         .strip_prefix("---\n")
@@ -31,14 +81,30 @@ pub fn parse(text: &str) -> Parsed<'_> {
             if line.trim_end() == "---" {
                 let front = &rest[..offset];
                 body = &rest[offset + line.len()..];
-                for l in front.lines() {
-                    if let Some((k, v)) = l.split_once(':') {
-                        let v = v.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-                        match k.trim() {
-                            "title" if !v.is_empty() => title = Some(clip(v, MAX_TITLE_CHARS)),
-                            "date" => date = valid_date(v),
-                            _ => {}
+                let lines: Vec<&str> = front.lines().collect();
+                for (i, l) in lines.iter().enumerate() {
+                    let Some((k, v)) = l.split_once(':') else {
+                        continue;
+                    };
+                    let v = unquote(v);
+                    let one = || (!v.is_empty()).then(|| v.to_string());
+                    match k.trim() {
+                        "title" if !v.is_empty() => title = Some(clip(v, MAX_TITLE_CHARS)),
+                        "date" => date = valid_date(v),
+                        "kind" => {
+                            meta.kind = one().map(|k| k.to_lowercase()).filter(|k| {
+                                matches!(k.as_str(), "business" | "product" | "process")
+                            })
                         }
+                        "project" => meta.project = one(),
+                        "status" => {
+                            meta.status = one().map(|s| s.to_lowercase()).filter(|s| {
+                                matches!(s.as_str(), "proposed" | "accepted" | "superseded")
+                            })
+                        }
+                        "supersedes" => meta.supersedes = list(v, &lines[i + 1..]),
+                        "superseded-by" => meta.superseded_by = one(),
+                        _ => {}
                     }
                 }
                 break;
@@ -53,11 +119,78 @@ pub fn parse(text: &str) -> Parsed<'_> {
             .map(|t| clip(t.trim().trim_end_matches('#').trim(), MAX_TITLE_CHARS))
             .filter(|t| !t.is_empty());
     }
-    Parsed { body, title, date }
+    Parsed {
+        body,
+        title,
+        date,
+        meta,
+    }
+}
+
+/// What an ADR's status line says, in the first lines of its body: `Status: accepted`,
+/// `Status: superseded by 0005`, `Status: accepted; amended by [0004](0004-x.md), 0007`.
+/// `amended by` alone means accepted.
+pub fn adr_status(body: &str) -> Meta {
+    let mut meta = Meta::default();
+    let Some(line) = body.lines().take(30).find_map(|l| {
+        let l = l.trim().trim_start_matches(['*', '_']);
+        let (key, rest) = l.split_at_checked(6)?;
+        let rest = rest.trim_start_matches(['*', '_']);
+        (key.eq_ignore_ascii_case("status") && rest.starts_with(':'))
+            .then(|| rest.trim_start_matches(['*', '_', ':', ' ']).trim())
+    }) else {
+        return meta;
+    };
+    for part in line.split(';') {
+        let part = part.trim();
+        let lower = part.to_lowercase();
+        if lower.starts_with("superseded by") {
+            meta.status = Some("superseded".into());
+            meta.superseded_by = refs(part.get("superseded by".len()..).unwrap_or(""))
+                .into_iter()
+                .next();
+        } else if lower.starts_with("amended by") {
+            meta.status.get_or_insert_with(|| "accepted".into());
+            meta.amended_by = refs(part.get("amended by".len()..).unwrap_or(""));
+        } else {
+            let word = lower
+                .split(|c: char| !c.is_alphabetic())
+                .next()
+                .unwrap_or("");
+            if matches!(word, "proposed" | "accepted" | "superseded") {
+                meta.status = Some(word.to_string());
+            }
+        }
+    }
+    meta
+}
+
+/// What an `amended by` or `superseded by` names: Markdown links give their targets, plain text
+/// its comma- or `and`-separated names.
+fn refs(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("](") {
+        let after = &rest[i + 2..];
+        let Some(end) = after.find(')') else { break };
+        out.push(after[..end].trim().to_string());
+        rest = &after[end + 1..];
+    }
+    if out.is_empty() {
+        out = text
+            .replace(" and ", ",")
+            .replace('&', ",")
+            .split(',')
+            .filter_map(|t| t.split_whitespace().next())
+            .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+    }
+    out
 }
 
 /// `YYYY-MM-DD` from the start of `s`, if it is one.
-fn valid_date(s: &str) -> Option<String> {
+pub fn valid_date(s: &str) -> Option<String> {
     let d = s.get(..10)?;
     let b = d.as_bytes();
     let ok = b.iter().enumerate().all(|(i, c)| {
@@ -93,13 +226,27 @@ pub fn date_of(time: SystemTime) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-/// `decision`, `note` or `raw`, from the top folder (see the settled rules for what lives where).
-pub fn kind_of(path: &str) -> &'static str {
+/// What kind of entry a file of an outside source is, from its top folder and its frontmatter
+/// (see the settled rules for what lives where): a decision is `business`, `product` or
+/// `process`, or just `decision` when its frontmatter doesn't say; then `note`, else `raw`.
+pub fn kind_of(path: &str, meta: &Meta) -> String {
     match path.split('/').next() {
-        Some("decisions") if path.contains('/') => "decision",
-        Some("notes") if path.contains('/') => "note",
-        _ => "raw",
+        Some("decisions") if path.contains('/') => {
+            meta.kind.clone().unwrap_or_else(|| "decision".into())
+        }
+        Some("notes") if path.contains('/') => "note".into(),
+        _ => "raw".into(),
     }
+}
+
+/// Whether `path` (relative to the project) is an ADR: a file in `adr/` under the docs folder.
+pub fn is_adr(path: &str, docs: &str) -> bool {
+    let adr = if docs.is_empty() {
+        "adr/".to_string()
+    } else {
+        format!("{docs}/adr/")
+    };
+    path.starts_with(&adr)
 }
 
 #[cfg(test)]
@@ -168,10 +315,77 @@ mod tests {
     }
 
     #[test]
-    fn kinds_come_from_the_top_folder() {
-        assert_eq!(kind_of("decisions/2024-05-14-x.md"), "decision");
-        assert_eq!(kind_of("notes/a.md"), "note");
-        assert_eq!(kind_of("notes.md"), "raw");
-        assert_eq!(kind_of("policies/decisions/x.md"), "raw");
+    fn kinds_come_from_the_top_folder_and_a_decisions_frontmatter() {
+        let none = Meta::default();
+        let product = Meta {
+            kind: Some("product".into()),
+            ..Default::default()
+        };
+        assert_eq!(kind_of("decisions/2024-05-14-x.md", &none), "decision");
+        assert_eq!(kind_of("decisions/2024-05-14-x.md", &product), "product");
+        assert_eq!(kind_of("notes/a.md", &product), "note");
+        assert_eq!(kind_of("notes.md", &none), "raw");
+        assert_eq!(kind_of("policies/decisions/x.md", &product), "raw");
+    }
+
+    #[test]
+    fn adrs_are_the_files_in_adr_under_the_docs_folder() {
+        assert!(is_adr("docs/adr/0001-x.md", "docs"));
+        assert!(is_adr("adr/0001-x.md", ""));
+        assert!(is_adr("handbook/adr/0001-x.md", "handbook"));
+        assert!(!is_adr("docs/PRODUCT.md", "docs"));
+        assert!(!is_adr("src/adr/0001-x.md", "docs"));
+    }
+
+    #[test]
+    fn a_decisions_frontmatter_says_what_it_decided_and_replaced() {
+        let p = parse(
+            "---\ntitle: T\nkind: Product\nproject: courier-app\nstatus: superseded\nsupersedes: [a, \"b\"]\nsuperseded-by: later\ndecided-by: owner\n---\nx",
+        );
+        assert_eq!(
+            p.meta,
+            Meta {
+                kind: Some("product".into()),
+                project: Some("courier-app".into()),
+                status: Some("superseded".into()),
+                supersedes: vec!["a".into(), "b".into()],
+                superseded_by: Some("later".into()),
+                amended_by: vec![],
+            }
+        );
+        let block = parse("---\nsupersedes:\n  - one\n  - two\nkind: process\n---\nx").meta;
+        assert_eq!(block.supersedes, ["one", "two"]);
+        assert_eq!(block.kind.as_deref(), Some("process"));
+        // What isn't one of the allowed values says nothing.
+        let odd = parse("---\nkind: cosmic\nstatus: maybe\n---\nx").meta;
+        assert!(odd.is_empty(), "{odd:?}");
+        assert!(parse("# Plain\n\nbody").meta.is_empty());
+    }
+
+    #[test]
+    fn an_adrs_status_line_says_accepted_superseded_or_amended() {
+        let s = |t: &str| adr_status(&format!("# 0001: T\n\n{t}\n\n## Context\n"));
+        assert_eq!(s("Status: accepted").status.as_deref(), Some("accepted"));
+        assert_eq!(
+            s("**Status:** Proposed").status.as_deref(),
+            Some("proposed")
+        );
+        let sup = s("Status: superseded by [0005](0005-x.md)");
+        assert_eq!(sup.status.as_deref(), Some("superseded"));
+        assert_eq!(sup.superseded_by.as_deref(), Some("0005-x.md"));
+        let plain = s("Status: superseded by 0005");
+        assert_eq!(plain.superseded_by.as_deref(), Some("0005"));
+        let am = s("Status: accepted; amended by [0004](0004-a.md), [0007](0007-b.md)");
+        assert_eq!(am.status.as_deref(), Some("accepted"));
+        assert_eq!(am.amended_by, ["0004-a.md", "0007-b.md"]);
+        let alone = s("Status: amended by 0004 and 0007");
+        assert_eq!(alone.status.as_deref(), Some("accepted"));
+        assert_eq!(alone.amended_by, ["0004", "0007"]);
+        assert!(adr_status("# No status here\n\nStatuses vary.\n").is_empty());
+        assert!(adr_status("Status: wat").is_empty());
+        // Non-ASCII text must not trip the slicing.
+        assert!(adr_status("Status: İİİİİİ superseded by x")
+            .status
+            .is_none());
     }
 }

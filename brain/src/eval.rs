@@ -24,6 +24,9 @@ struct Question {
     question: String,
     terms: Option<String>,
     expect: Vec<String>,
+    /// Files that must not be among the top 5 hits: what a decision superseded, say.
+    #[serde(default)]
+    absent: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -123,7 +126,7 @@ pub fn measure(
         })
         .collect::<Result<_>>()?;
     for q in &questions {
-        for e in &q.expect {
+        for e in q.expect.iter().chain(&q.absent) {
             let (want_project, path) = match e.strip_prefix("project:") {
                 Some(p) => (true, p),
                 None => (false, e.as_str()),
@@ -153,6 +156,7 @@ pub fn measure(
     let report = (files, chunks, embedded);
 
     let (mut sums, mut latencies) = ([(0.0, 0.0); 3], Vec::new());
+    let mut returned: Vec<String> = Vec::new();
     for q in &questions {
         let mut ranks = Vec::new();
         let terms = q.terms.clone().unwrap_or_else(|| words_of(&q.question));
@@ -176,6 +180,15 @@ pub fn measure(
         for (i, query) in modes.iter().enumerate() {
             let t = Instant::now();
             let hits = search::search(&opened, embedder, query, search::EXACT_LIMIT)?;
+            for a in &q.absent {
+                if hits.iter().take(5).any(|h| is_expected(h, a)) {
+                    returned.push(format!(
+                        "question {}: {a} is among the top 5 hits of the {} search, and should have been left out",
+                        q.id,
+                        ["terms", "about", "hybrid"][i]
+                    ));
+                }
+            }
             if i == 2 {
                 latencies.push(t.elapsed().as_secs_f64() * 1000.0);
             }
@@ -206,6 +219,9 @@ pub fn measure(
                 q.id, ranks[0], ranks[1], ranks[2]
             );
         }
+    }
+    if !returned.is_empty() {
+        bail!("{}", returned.join("\n"));
     }
     let n = questions.len().max(1) as f64;
     let mode = |i: usize| Mode {
