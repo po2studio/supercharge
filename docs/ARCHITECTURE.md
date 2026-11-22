@@ -26,7 +26,7 @@ The binary is released from this repo ([ADR 0001](adr/0001-one-binary-in-the-bun
 
 ## External services
 
-- **GitHub:** issues, labels, PRs, Actions. A feature is one issue whose checklist is the progress record, outside the codebase and the same for every agent; only features planned with sub-issues have sub-issues. No fake: without a GitHub remote, the skills use local branches and the checks in `AGENTS.md` instead, and the ticks stay in the feature doc.
+- **GitHub:** issues, labels, PRs, Actions, and releases (the binary's, and a brain repo's `brain-index` release). A feature is one issue whose checklist is the progress record, outside the codebase and the same for every agent; only features planned with sub-issues have sub-issues. No fake: without a GitHub remote, the skills use local branches and the checks in `AGENTS.md` instead, and the ticks stay in the feature doc.
 - **Model providers,** through omp or Claude Code.
 
-Everything but the `brain` binary is skill text, with no code to run. The binary runs offline: the embedding model is compiled in and the only I/O is the sources it reads and the index under `~/.cache/supercharge/`, so its tests and `brain eval` need no fakes. The one embedding interface (`Embedder`) has a hashed bag-of-words fake for unit tests.
+Everything but the `brain` binary is skill text, with no code to run. The binary works offline: the embedding model is compiled in and the I/O is the sources it reads and the index under `~/.cache/supercharge/`, so its unit tests and `brain eval` need no fakes. The one network use is `brain index` of an outside source that is a GitHub brain repo, which asks GitHub through `gh` for the index its CI published and builds locally when there is none or `gh` fails; `brain/tests/shared.rs` stands in for `gh` with a script that serves a release from a folder. The one embedding interface (`Embedder`) has a hashed bag-of-words fake for unit tests.

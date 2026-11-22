@@ -207,7 +207,7 @@ fn newest<'a>(p: &Published<'a>) -> &'a str {
 fn try_pull(repo: &str, root: &Path, index_path: &Path) -> Result<Pulled, String> {
     let all = assets(repo)?;
     let found = complete(&all);
-    let Some(index) = found.first() else {
+    if found.is_empty() {
         return Err(if all.is_empty() {
             format!("no index is published for {repo} yet")
         } else {
@@ -218,14 +218,23 @@ fn try_pull(repo: &str, root: &Path, index_path: &Path) -> Result<Pulled, String
                 env!("CARGO_PKG_VERSION")
             )
         });
-    };
+    }
     let dir = index_path.parent().ok_or("the index has no folder")?;
     let tmp = dir.join("pull");
-    let _ = fs::remove_dir_all(&tmp);
-    fs::create_dir_all(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-    let result = download(repo, index, root, index_path, &tmp);
-    let _ = fs::remove_dir_all(&tmp);
-    result
+    // The newest first; one that cannot be used (its upload was still going on, say) costs only
+    // the next-newest.
+    let mut last = String::new();
+    for index in &found {
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+        let result = download(repo, index, root, index_path, &tmp);
+        let _ = fs::remove_dir_all(&tmp);
+        match result {
+            Ok(pulled) => return Ok(pulled),
+            Err(why) => last = why,
+        }
+    }
+    Err(last)
 }
 
 fn download(
@@ -391,6 +400,26 @@ pub fn clean_commit(root: &Path) -> Result<String> {
         bail!(
             "{} has uncommitted changes, and the shared index is keyed by the commit",
             root.display()
+        );
+    }
+    // Ignored files are read by the indexer like any other, but are not in the commit. Hidden
+    // names (`.cache/`, `.DS_Store`) are never indexed, so they do not count.
+    let ignored = git(&[
+        "status",
+        "--porcelain",
+        "--ignored",
+        "--untracked-files=all",
+    ])?;
+    let loose: Vec<&str> = ignored
+        .lines()
+        .filter_map(|l| l.strip_prefix("!! "))
+        .filter(|p| !p.split('/').any(|c| c.starts_with('.')))
+        .collect();
+    if let Some(first) = loose.first() {
+        bail!(
+            "{} has ignored files that are not in the commit ({first}{}), and the shared index is keyed by the commit",
+            root.display(),
+            if loose.len() > 1 { ", …" } else { "" }
         );
     }
     Ok(commit)

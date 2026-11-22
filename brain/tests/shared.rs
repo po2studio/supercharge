@@ -382,6 +382,69 @@ fn tampered(gh: &FakeGh, asset: &str, key: &str, value: &str, as_name: &str) {
     enc.finish().unwrap();
 }
 
+// An index still being uploaded (its first part is there and is not a whole index) must not cost
+// the machine the older whole one.
+#[test]
+fn a_newest_index_that_cannot_be_unpacked_falls_back_to_the_one_before() {
+    let maker = brain_repo();
+    let gh = FakeGh::new();
+    let good = pack(maker.path(), &gh, &[]).remove(0);
+    let broken = asset_name(MODEL, VERSION, &"e".repeat(40));
+    fs::write(gh.release.path().join(&broken), b"not a gzip file").unwrap();
+    gh.publish(&[&good, &broken]);
+    let fresh = clone_of(maker.path());
+    let project = project_listing(fresh.path());
+    let cache = TempDir::new().unwrap();
+    let index = json(brain_in(
+        project.path(),
+        cache.path(),
+        &gh,
+        &["index", "--json"],
+    ));
+    let run = source(&index, fresh.path().to_str().unwrap());
+    assert_eq!(run["embedded_chunks"], 0, "{index}");
+    assert_eq!(
+        run["shared"]["commit"],
+        git(maker.path(), &["rev-parse", "HEAD"]).as_str()
+    );
+    assert_eq!(gh.calls().matches("release download").count(), 2);
+}
+
+// `pack` keys the index by the commit, so it refuses a folder holding indexable files the commit
+// does not, and honours --repo like every command.
+#[test]
+fn pack_refuses_ignored_files_and_honours_repo() {
+    let maker = brain_repo();
+    write(maker.path(), ".gitignore", "scratch/\n");
+    git(maker.path(), &["add", "-A"]);
+    git(maker.path(), &["commit", "-qm", "ignore scratch"]);
+    write(
+        maker.path(),
+        "scratch/draft.md",
+        "# Draft\n\nNot in the commit.\n",
+    );
+    let gh = FakeGh::new();
+    let cache = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let out_dir = gh.release.path().to_str().unwrap().to_string();
+    let args = [
+        "--repo",
+        maker.path().to_str().unwrap(),
+        "pack",
+        "--out",
+        &out_dir,
+    ];
+    let out = brain_in(elsewhere.path(), cache.path(), &gh, &args);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("scratch/draft.md") && stderr.contains("not in the commit"),
+        "{stderr}"
+    );
+    fs::remove_dir_all(maker.path().join("scratch")).unwrap();
+    ok(brain_in(elsewhere.path(), cache.path(), &gh, &args));
+}
+
 // AC 2: an index from another model or binary version is ignored, and a local build runs.
 #[test]
 fn an_index_of_another_model_or_version_is_ignored_and_the_index_is_built_here() {
@@ -503,4 +566,30 @@ fn bench_builds_a_synthetic_brain_and_reports_search_and_indexing_speed() {
         .map(|e| e.unwrap().path())
         .collect();
     assert!(left.is_empty(), "{left:?}");
+}
+
+// A relative `--dir` (or one through a symlink, as macOS's /tmp is) names the same synthetic brain
+// to the bench and to the `brain search` processes it starts.
+#[test]
+fn bench_works_with_a_relative_dir() {
+    let cwd = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+    fs::create_dir(cwd.path().join("work")).unwrap();
+    let out = brain(
+        cwd.path(),
+        cache.path(),
+        "/usr/bin:/bin",
+        cache.path(),
+        &[
+            "bench",
+            "--chunks",
+            "800",
+            "--embed-sample",
+            "8",
+            "--dir",
+            "work",
+            "--json",
+        ],
+    );
+    assert_eq!(json(out)["chunks"], 800);
 }

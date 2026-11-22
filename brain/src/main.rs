@@ -536,6 +536,7 @@ fn pack(cli: &Cli, out: &Path, budget: Option<u64>, part_bytes: u64, json: bool)
     let root = cli
         .source
         .first()
+        .or(cli.repo.as_ref())
         .cloned()
         .or_else(|| sources::find_project(&cwd))
         .unwrap_or(cwd);

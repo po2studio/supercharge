@@ -149,7 +149,10 @@ pub fn run(opts: &Opts, embedder: &mut dyn Embedder) -> Result<Results> {
     if opts.chunks == 0 {
         bail!("--chunks must be at least 1");
     }
-    let work = opts.dir.join(format!("bench-{}", std::process::id()));
+    // Absolute and without symlinks: the command line the bench starts names the brain by its
+    // canonical path, and an index is found by that name.
+    fs::create_dir_all(&opts.dir)?;
+    let work = fs::canonicalize(&opts.dir)?.join(format!("bench-{}", std::process::id()));
     fs::create_dir_all(&work)?;
     let _scratch = Scratch {
         dir: work.clone(),
@@ -289,7 +292,7 @@ fn cli_p50(root: &Path, queries: &[(String, String)]) -> Result<Option<f64>> {
     let Ok(exe) = std::env::current_exe() else {
         return Ok(None);
     };
-    let cache = store::cache_dir()?;
+    let cache = fs::canonicalize(store::cache_dir()?)?;
     let mut ms = Vec::new();
     for (terms, about) in queries.iter().cycle().take(CLI_RUNS) {
         let t = Instant::now();
