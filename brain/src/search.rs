@@ -172,14 +172,14 @@ pub fn search(
             })?);
         }
         if exact.iter().any(|e| !e.is_empty()) {
-            // The best few matches only: they join the by-meaning list, they do not outvote it.
+            // The best few files only: they join the by-meaning list, they do not outvote it.
             lists.push(merge(
                 sources,
                 EXACT_MATCHES,
                 &mut true,
                 |n, s| match exact[n].as_str() {
                     "" => Ok(Vec::new()),
-                    text => fts(&s.store, text, EXACT_MATCHES),
+                    text => fts_files(&s.store, text, EXACT_MATCHES),
                 },
             )?);
         }
@@ -333,6 +333,33 @@ fn fts(store: &Store, query: &str, pool: usize) -> Result<Vec<(i64, f64)>> {
     })?;
     rows.collect::<rusqlite::Result<_>>()
         .with_context(|| format!("cannot search for {query:?}"))
+}
+
+/// The best chunk of each of the best `files` files that show in results (those without a newer
+/// copy, as `chunk_hit` decides), best first, with `-bm25` as the score. Older copies and a
+/// file's further chunks take none of the places.
+fn fts_files(store: &Store, query: &str, files: usize) -> Result<Vec<(i64, f64)>> {
+    let mut stmt = store.conn.prepare(
+        "SELECT fts.rowid, -bm25(fts), c.file_id FROM fts \
+         JOIN chunks c ON c.id = fts.rowid JOIN files f ON f.id = c.file_id \
+         WHERE fts MATCH ?1 AND NOT EXISTS(SELECT 1 FROM files n WHERE n.path = f.dup_of) \
+         ORDER BY bm25(fts)",
+    )?;
+    let mut rows = stmt.query([query])?;
+    let mut seen: HashSet<i64> = HashSet::new();
+    let mut out = Vec::new();
+    while out.len() < files {
+        let Some(r) = rows
+            .next()
+            .with_context(|| format!("cannot search for {query:?}"))?
+        else {
+            break;
+        };
+        if seen.insert(r.get(2)?) {
+            out.push((r.get(0)?, r.get(1)?));
+        }
+    }
+    Ok(out)
 }
 
 /// Threads that read the 1-bit codes at once: more than this and SQLite's page cache and the
@@ -1075,5 +1102,50 @@ mod tests {
         }
         // Asking for more files than there are fills the list from the files that remain.
         assert_eq!(ask(&s, "leave plants", 10, Mode::FullText).len(), 2);
+    }
+
+    /// The exact-token list's places go to files that show in results: older copies and a file's
+    /// further chunks take none.
+    #[test]
+    fn the_exact_list_is_the_best_chunk_of_each_of_the_best_visible_files() {
+        let rare = "Ticket QZX-77 was closed.";
+        let long = "Notes on many unrelated subjects follow, ".repeat(12);
+        let many = format!(
+            "# Many\n\n{rare}\n\n# Again\n\n{rare}\n\n# And again\n\n{rare}\n\n# Last\n\n{rare}"
+        );
+        let mut files: Vec<(String, String)> = (0..12)
+            .map(|n| (format!("f{n:02}.md"), format!("# F{n}\n\nPlain text {n}.")))
+            .collect();
+        files.extend([
+            ("old1.md".into(), rare.into()),
+            ("old2.md".into(), rare.into()),
+            ("old3.md".into(), rare.into()),
+            ("new.md".into(), format!("{long} {rare} {long}")),
+            ("many.md".into(), many),
+        ]);
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let (_d, s) = brain(&refs);
+        s[0].store
+            .conn
+            .execute(
+                "UPDATE files SET dup_of = 'new.md' WHERE path LIKE 'old%'",
+                [],
+            )
+            .unwrap();
+        let listed = fts_files(&s[0].store, "\"QZX-77\"", EXACT_MATCHES).unwrap();
+        let mut found: Vec<String> = listed
+            .iter()
+            .map(|(id, score)| chunk_hit(&s[0], *id, *score).unwrap().unwrap().path)
+            .collect();
+        found.sort();
+        assert_eq!(found, ["many.md", "new.md"]);
+        // The same in a search: the exact token alone puts both in the results.
+        let hits = ask(&s, "what happened with QZX-77", 2, Mode::Both);
+        let mut found = paths(&hits);
+        found.sort();
+        assert_eq!(found, ["many.md", "new.md"]);
     }
 }
