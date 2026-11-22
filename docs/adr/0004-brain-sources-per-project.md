@@ -1,6 +1,6 @@
 # 0004: Brain sources are set per project; writing is opt-in
 
-Status: accepted
+Status: accepted; amended by [0005](0005-agents-keep-documents-true.md)
 
 ## Context
 
