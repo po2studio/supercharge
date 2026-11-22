@@ -40,8 +40,22 @@ pub fn clip(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
+/// A frontmatter value: quotes removed, and a trailing ` # comment` cut off, as YAML does.
 fn unquote(v: &str) -> &str {
-    v.trim().trim_matches(|c| c == '"' || c == '\'').trim()
+    let v = v.trim();
+    for q in ['"', '\''] {
+        if let Some(inner) = v.strip_prefix(q) {
+            if let Some(end) = inner.find(q) {
+                return &inner[..end];
+            }
+        }
+    }
+    let v = match v.find(" #") {
+        Some(i) => &v[..i],
+        None if v.starts_with('#') => "",
+        None => v,
+    };
+    v.trim()
 }
 
 /// A frontmatter list: `[a, b]` on the line, or `- a` lines after an empty value.
@@ -165,28 +179,24 @@ pub fn adr_status(body: &str) -> Meta {
     meta
 }
 
-/// What an `amended by` or `superseded by` names: Markdown links give their targets, plain text
-/// its comma- or `and`-separated names.
+/// What an `amended by` or `superseded by` names: a comma- or `and`-separated list whose items
+/// are Markdown links (their targets) or plain names.
 fn refs(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(i) = rest.find("](") {
-        let after = &rest[i + 2..];
-        let Some(end) = after.find(')') else { break };
-        out.push(after[..end].trim().to_string());
-        rest = &after[end + 1..];
-    }
-    if out.is_empty() {
-        out = text
-            .replace(" and ", ",")
-            .replace('&', ",")
-            .split(',')
-            .filter_map(|t| t.split_whitespace().next())
-            .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
-            .filter(|t| !t.is_empty())
-            .collect();
-    }
-    out
+    text.replace(" and ", ",")
+        .replace('&', ",")
+        .split(',')
+        .filter_map(|item| {
+            let name = match item.find("](") {
+                Some(i) => item[i + 2..].split(')').next().unwrap_or("").trim(),
+                None => item
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_matches(|c: char| !c.is_alphanumeric()),
+            };
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .collect()
 }
 
 /// `YYYY-MM-DD` from the start of `s`, if it is one.
@@ -356,6 +366,15 @@ mod tests {
         let block = parse("---\nsupersedes:\n  - one\n  - two\nkind: process\n---\nx").meta;
         assert_eq!(block.supersedes, ["one", "two"]);
         assert_eq!(block.kind.as_deref(), Some("process"));
+        // A trailing comment is not part of the value, as in the settled example.
+        let commented = parse(
+            "---\nkind: product   # business | product | process\nproject: courier-app          # optional\nstatus: superseded # replaced\nsupersedes: [a, b]   # earlier ones\ntitle: \"Use # in titles\"\n---\nx",
+        );
+        assert_eq!(commented.title.as_deref(), Some("Use # in titles"));
+        assert_eq!(commented.meta.kind.as_deref(), Some("product"));
+        assert_eq!(commented.meta.project.as_deref(), Some("courier-app"));
+        assert_eq!(commented.meta.status.as_deref(), Some("superseded"));
+        assert_eq!(commented.meta.supersedes, ["a", "b"]);
         // What isn't one of the allowed values says nothing.
         let odd = parse("---\nkind: cosmic\nstatus: maybe\n---\nx").meta;
         assert!(odd.is_empty(), "{odd:?}");
@@ -381,6 +400,8 @@ mod tests {
         let alone = s("Status: amended by 0004 and 0007");
         assert_eq!(alone.status.as_deref(), Some("accepted"));
         assert_eq!(alone.amended_by, ["0004", "0007"]);
+        let mixed = s("Status: accepted; amended by [0004](0004-a.md), 0007 and [0009](0009-c.md)");
+        assert_eq!(mixed.amended_by, ["0004-a.md", "0007", "0009-c.md"]);
         assert!(adr_status("# No status here\n\nStatuses vary.\n").is_empty());
         assert!(adr_status("Status: wat").is_empty());
         // Non-ASCII text must not trip the slicing.

@@ -279,19 +279,22 @@ pub fn search_filtered(
             (None, None) => unreachable!(),
         };
         let mut hits: Vec<(usize, Hit)> = Vec::new();
+        // Superseded hits (with `--all`) go last, so they don't count towards the window.
+        let mut current = 0;
         let mut seen: std::collections::HashSet<(usize, String)> = Default::default();
         for ((n, id), score) in ranked {
             let hit = chunk_hit(&sources[n], id, score)?;
             // One hit per file of a source; the label is for people, so two sources are told
             // apart by position, not by name.
             if seen.insert((n, hit.path.clone())) {
+                current += usize::from(hit.status.as_deref() != Some("superseded"));
                 hits.push((n, hit));
             }
-            if hits.len() == window {
+            if current == window {
                 break;
             }
         }
-        if hits.len() == window || exhausted {
+        if current == window || exhausted {
             return trusted(sources, hits, q.k, filter);
         }
         pool *= 4;
@@ -303,7 +306,7 @@ fn is_accepted_decision(h: &Hit) -> bool {
 }
 
 /// The best `k` of the hits (most relevant first) by the trust order; each amended ADR is
-/// followed by the ADRs that amend it, if they weren't hit already.
+/// followed by the ADRs that amend it, and theirs in turn, if they weren't hit already.
 fn trusted(
     sources: &[Opened],
     hits: Vec<(usize, Hit)>,
@@ -331,16 +334,21 @@ fn trusted(
         hits.iter().map(|(n, h)| (*n, h.path.clone())).collect();
     let mut out = Vec::new();
     for (n, hit) in hits {
-        let amendments = hit.amended_by.clone();
+        let mut queue: std::collections::VecDeque<String> =
+            hit.amended_by.iter().cloned().collect();
         let score = hit.score;
         out.push(hit);
-        for path in amendments {
-            if seen.insert((n, path.clone())) {
-                if let Some(extra) = file_hit(&sources[n], &path, score)? {
-                    if extra.status.as_deref() != Some("superseded") || !filter.hides_superseded() {
-                        out.push(extra);
-                    }
+        // An amendment can be amended in turn; `seen` also stops a cycle.
+        while let Some(path) = queue.pop_front() {
+            if !seen.insert((n, path.clone())) {
+                continue;
+            }
+            if let Some(extra) = file_hit(&sources[n], &path, score)? {
+                if extra.status.as_deref() == Some("superseded") && filter.hides_superseded() {
+                    continue;
                 }
+                queue.extend(extra.amended_by.iter().cloned());
+                out.push(extra);
             }
         }
     }
@@ -1031,6 +1039,49 @@ mod tests {
     }
 
     #[test]
+    fn with_all_the_current_decision_is_still_found_behind_many_superseded_ones() {
+        let mut files: Vec<(String, String)> = (0..4)
+            .map(|i| {
+                (
+                    format!("decisions/2023-0{}-01-old{i}.md", i + 1),
+                    decision(
+                        "Old",
+                        &format!("2023-0{}-01", i + 1),
+                        "product",
+                        "status: superseded\nsuperseded-by: 2025-01-01-new\n",
+                        &"gizmo ".repeat(10),
+                    ),
+                )
+            })
+            .collect();
+        files.push((
+            "decisions/2025-01-01-new.md".into(),
+            decision(
+                "New",
+                "2025-01-01",
+                "product",
+                "status: accepted\n",
+                "gizmo",
+            ),
+        ));
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let (_d, s) = brain(&refs);
+        let hits = found(
+            &s,
+            "gizmo",
+            1,
+            &Filter {
+                all: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(hits[0].path, "decisions/2025-01-01-new.md");
+    }
+
+    #[test]
     fn filters_narrow_by_kind_project_since_and_status() {
         let (_d, s) = rules();
         let only = |f: Filter| -> Vec<String> {
@@ -1234,7 +1285,8 @@ mod tests {
         let root = dir.path().join("courier-app");
         for (p, t) in [
             ("docs/adr/0002-a.md", "# 0002: Currencies\n\nStatus: accepted; amended by [0004](0004-b.md)\n\nStored in ISK and EUR."),
-            ("docs/adr/0004-b.md", "# 0004: Add NOK\n\nStatus: accepted\n\nNOK as well."),
+            ("docs/adr/0004-b.md", "# 0004: Add NOK\n\nStatus: accepted; amended by [0005](0005-c.md)\n\nNOK as well."),
+            ("docs/adr/0005-c.md", "# 0005: NOK rounding\n\nStatus: accepted\n\nRounded at the edge."),
             ("docs/adr/0001-o.md", "# 0001: Old\n\nStatus: superseded by 0002\n\nStored in ISK only."),
             ("docs/PRODUCT.md", "# Product\n\nAmounts in ISK."),
         ] {
@@ -1264,6 +1316,8 @@ mod tests {
         assert_eq!(hits[at].kind, "adr");
         assert_eq!(hits[at].amended_by, ["docs/adr/0004-b.md"]);
         assert_eq!(paths[at + 1], "docs/adr/0004-b.md", "{paths:?}");
+        // The amendment was amended too, and comes along.
+        assert_eq!(paths[at + 2], "docs/adr/0005-c.md", "{paths:?}");
         assert!(!paths.contains(&"docs/adr/0001-o.md"));
 
         // No `project:` in an ADR: it is the project's, named after its folder here (no remote).
@@ -1277,7 +1331,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(own.len(), 2);
+        assert_eq!(own.len(), 3);
         assert!(found(
             &s,
             "ISK",

@@ -247,12 +247,12 @@ fn run() -> Result<()> {
                     } else {
                         format!(" › {}", h.heading)
                     };
-                    let mut notes = String::new();
-                    if let Some(by) = &h.superseded_by {
-                        notes = format!("; superseded by {by}");
-                    } else if h.status.as_deref() == Some("superseded") {
-                        notes = "; superseded".into();
-                    }
+                    // What a decision or ADR is today: its status, or what replaced it.
+                    let mut notes = match (&h.superseded_by, h.status.as_deref()) {
+                        (Some(by), _) => format!("; superseded by {by}"),
+                        (None, Some(status)) => format!("; {status}"),
+                        (None, None) => String::new(),
+                    };
                     if !h.amended_by.is_empty() {
                         notes += &format!("; amended by {}", h.amended_by.join(", "));
                     }

@@ -4,7 +4,7 @@ Slice 3 of [feature 0002](../docs/features/0002-second-brain.md). The binary was
 
 ## Setup
 
-- `repo/`: a git repo with `origin` set to `git@github.com:acme/courier-app.git`, an `AGENTS.md` whose block lists `../brain` with `update: true`, `docs/BUSINESS.md`, and four ADRs: 0001 `superseded by [0003](…)`, 0002 `accepted; amended by [0004](…)`, 0003 and 0004 `accepted`.
+- `repo/`: a git repo with `origin` set to `git@github.com:acme/courier-app.git`, an `AGENTS.md` whose block lists `../brain` with `update: true`, `docs/BUSINESS.md`, and four ADRs: 0001 `superseded by 0003` (as a link), 0002 `accepted; amended by 0004` (as a link), 0003 and 0004 `accepted`.
 - `brain/`: a git clone of an empty bare repo. `brain init` created `BRAIN.md`, `decisions/`, `notes/` and `projects/`.
 - Three decision files written as the skill's Recording step says: a 2023 product decision (`status: superseded`, `superseded-by`), the 2026 one that replaced it (`supersedes: [2023-11-02-single-phone]`), and a process decision of another project (`project: other-app`).
 

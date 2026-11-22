@@ -10,7 +10,7 @@ use crate::{doc::Meta, store::Store};
 const EXTENSIONS: [&str; 4] = ["md", "markdown", "txt", "text"];
 
 /// Recomputes `status`, `superseded_by` and `amended_by` of every file from what the files
-/// declare. A decision is superseded when it says so, or when an accepted decision lists it in
+/// declare. A decision is superseded when it says so, or when a decision that was accepted lists it in
 /// `supersedes`, so a replacement written without updating the old one still hides it.
 pub fn resolve(store: &mut Store) -> Result<()> {
     let tx = store.conn.transaction()?;
@@ -45,7 +45,9 @@ pub fn resolve(store: &mut Store) -> Result<()> {
         )?;
     }
     for (path, meta) in &declared {
-        if meta.status.as_deref() != Some("accepted") {
+        // A decision that was accepted still counts for what it replaced, even once it is
+        // superseded itself: replacing A with B and B with C leaves A replaced.
+        if !matches!(meta.status.as_deref(), Some("accepted" | "superseded")) {
             continue;
         }
         for old in meta.supersedes.iter().filter_map(|r| lookup(&tx, path, r)) {
@@ -209,6 +211,23 @@ mod tests {
             file("decisions/b.md", supersedes("proposed")),
         ]);
         assert_eq!(state(&s, "decisions/a.md").0, "accepted");
+    }
+
+    #[test]
+    fn replacing_a_replacement_leaves_the_first_one_replaced() {
+        let supersedes = |status: &str, old: &str| Meta {
+            supersedes: vec![old.into()],
+            ..meta(status)
+        };
+        // A is accepted; B replaced A and was replaced by C, neither of them marking A.
+        let (_d, s) = store_of(vec![
+            file("decisions/a.md", meta("accepted")),
+            file("decisions/b.md", supersedes("accepted", "a")),
+            file("decisions/c.md", supersedes("accepted", "b")),
+        ]);
+        assert_eq!(state(&s, "decisions/a.md").0, "superseded");
+        assert_eq!(state(&s, "decisions/b.md").0, "superseded");
+        assert_eq!(state(&s, "decisions/c.md").0, "accepted");
     }
 
     #[test]

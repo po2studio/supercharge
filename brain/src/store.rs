@@ -39,6 +39,7 @@ CREATE TABLE chunks (
     code BLOB NOT NULL
 );
 CREATE INDEX chunks_file ON chunks(file_id);
+CREATE INDEX files_status ON files(status);
 CREATE VIRTUAL TABLE fts USING fts5(header, body, tokenize = 'unicode61 remove_diacritics 2');
 ";
 
