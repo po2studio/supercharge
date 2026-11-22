@@ -12,6 +12,7 @@ calamine = "0.38.0"
 clap = { version = "4", features = ["derive"] }
 csv = "1.4.0"
 encoding_rs = "0.8.44"
+flate2 = "1"
 libc = "0.2"
 mail-parser = "1.0.1"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries"] }

@@ -507,12 +507,16 @@ fn vector(
         let mut stmt = store
             .conn
             .prepare(&format!("SELECT id, code FROM chunks{filter}"))?;
+        // The distance is taken on the bytes SQLite holds: no copy of each code.
         let rows = stmt.query_map(rusqlite::params_from_iter(values), |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+            Ok((
+                vecs::hamming(&qcode, r.get_ref(1)?.as_blob()?),
+                r.get::<_, i64>(0)?,
+            ))
         })?;
         for row in rows {
-            let (id, code) = row?;
-            near.push((vecs::hamming(&qcode, &code), id));
+            let (distance, id) = row?;
+            near.push((distance, id));
             if near.len() >= keep * 4 {
                 near.select_nth_unstable(keep);
                 near.truncate(keep);
