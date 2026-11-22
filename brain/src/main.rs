@@ -305,6 +305,9 @@ fn run() -> Result<()> {
                     if !h.amended_by.is_empty() {
                         notes += &format!("; amended by {}", h.amended_by.join(", "));
                     }
+                    if h.stale {
+                        notes += "; STALE note: a file it was made from changed or is gone";
+                    }
                     println!(
                         "{}. [{}] {}{} ({}, score {:.3}{})",
                         i + 1,

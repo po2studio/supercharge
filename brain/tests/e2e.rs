@@ -961,6 +961,32 @@ fn a_note_is_stale_when_its_sources_change_and_fresh_again_once_refreshed() {
         text.contains("stale notes (3)") && text.contains("notes/trip.md"),
         "{text}"
     );
+    // So does the text a search prints, which is what the skill's search subagent reads.
+    let out = Command::new(env!("CARGO_BIN_EXE_brain"))
+        .current_dir(&repo)
+        .env_clear()
+        .env("SUPERCHARGE_CACHE_DIR", cache.path())
+        .args([
+            "search",
+            "--about",
+            "business trip approval and meals abroad",
+            "-k",
+            "8",
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let trip = text
+        .lines()
+        .find(|l| l.contains("notes/trip.md"))
+        .unwrap_or("");
+    assert!(trip.contains("STALE note"), "{text}");
+    assert!(
+        text.lines()
+            .filter(|l| l.contains("travel.md") || l.contains("meals.md"))
+            .all(|l| !l.contains("STALE")),
+        "{text}"
+    );
 
     // The project's own docs change too.
     write(
@@ -983,6 +1009,24 @@ fn a_note_is_stale_when_its_sources_change_and_fresh_again_once_refreshed() {
     assert_eq!(hits[0]["date"], "2025-04-01");
     assert!(!names(&notes_of(&run(&["stats", "--json"]))["stale"])
         .contains(&"notes/trip.md".to_string()));
+    // Notes of two projects that both cite `project:docs/PRODUCT.md` cite different files: they
+    // are not duplicates of each other, and neither is judged from this project.
+    for name in ["a", "b"] {
+        write(
+            &format!("brain/notes/product-{name}.md"),
+            &format!(
+                "---\ntitle: Product of {name}\nproject: {name}\nsummary: s\nquestions:\n  - q\nsources:\n  - path: project:docs/PRODUCT.md\n    hash: {}\nverified: 2025-04-02\n---\n\nSomething about project {name}.\n",
+                sha256("x")
+            ),
+        );
+    }
+    run(&["index", "--json"]);
+    let notes = notes_of(&run(&["stats", "--json"]));
+    assert_eq!(notes["total"], 6);
+    assert_eq!(notes["duplicates"].as_array().unwrap().len(), 1, "{notes}");
+    assert!(!names(&notes["stale"])
+        .iter()
+        .any(|p| p.contains("product-")));
     // Reading and indexing wrote nothing: the sources hold what this test put there.
     let listing = |d: &str| -> Vec<String> {
         let mut v: Vec<String> = fs::read_dir(dir.path().join(d))

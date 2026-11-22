@@ -6,7 +6,12 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{cell::OnceCell, collections::BTreeSet, fs, path::Component, path::Path};
+use std::{
+    cell::OnceCell,
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Component, Path},
+};
 
 use crate::{dedup, search::Opened, sources};
 
@@ -180,8 +185,16 @@ pub struct Ctx<'a> {
     project: OnceCell<String>,
 }
 
-fn sha(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+/// The sha256 of a regular file, read in blocks; a file that isn't one (or can't be read) has none.
+fn sha_of_file(path: &Path) -> Option<String> {
+    // Looked at before it is opened: opening a pipe would wait for a writer.
+    if !fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let file = fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut std::io::BufReader::new(file), &mut hasher).ok()?;
+    Some(format!("{:x}", hasher.finalize()))
 }
 
 impl std::fmt::Display for State {
@@ -226,7 +239,7 @@ impl<'a> Ctx<'a> {
                 _ => return Ok(None),
             }
         }
-        Ok(fs::read(&path).ok().map(|b| sha(&b)))
+        Ok(sha_of_file(&path))
     }
 
     /// Each source of the note stored in source `own`, as it is now. A file of a project's docs
@@ -331,7 +344,9 @@ impl Summary {
 pub fn report(sources: &[Opened], n: usize) -> Result<Report> {
     let ctx = Ctx::new(sources);
     let mut report = Report::default();
-    let mut items = Vec::new();
+    // Two projects may cite `project:docs/PRODUCT.md` and mean different files, so notes are
+    // only compared within a project.
+    let mut items: BTreeMap<Option<String>, Vec<dedup::Item>> = BTreeMap::new();
     for row in sources[n].store.notes()? {
         report.total += 1;
         let note = row.meta.note.clone().unwrap_or_default();
@@ -354,15 +369,19 @@ pub fn report(sources: &[Opened], n: usize) -> Result<Report> {
         } else {
             cited.into_iter().collect::<Vec<_>>().join("\n")
         };
-        items.push(dedup::Item {
-            path: row.path,
-            hash: key,
-            date: row.date,
-            fingerprint: row.simhash,
-        });
+        items
+            .entry(row.meta.project.clone())
+            .or_default()
+            .push(dedup::Item {
+                path: row.path,
+                hash: key,
+                date: row.date,
+                fingerprint: row.simhash,
+            });
     }
-    report.duplicates = dedup::copies(&items)
-        .into_iter()
+    report.duplicates = items
+        .values()
+        .flat_map(|items| dedup::copies(items))
         .map(|(path, of)| Duplicate { path, of })
         .collect();
     report.duplicates.sort_by(|a, b| a.path.cmp(&b.path));
@@ -445,6 +464,24 @@ mod tests {
         assert!(text.contains("Also called: trip rules"));
         assert!(text.ends_with("Ten days ahead.\n"));
         assert_eq!(indexed_text(&Note::default(), "Body"), "Body");
+    }
+
+    #[test]
+    fn a_file_is_hashed_and_a_folder_or_a_pipe_is_not() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("a.md");
+        fs::write(&file, "hello").unwrap();
+        assert_eq!(
+            sha_of_file(&file).as_deref(),
+            Some("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        );
+        assert_eq!(sha_of_file(dir.path()), None);
+        assert_eq!(sha_of_file(&dir.path().join("missing")), None);
+        // Opening a pipe would wait for a writer for ever.
+        let pipe = dir.path().join("pipe");
+        let name = std::ffi::CString::new(pipe.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert_eq!(sha_of_file(&pipe), None);
     }
 
     // What a stale note is, and how notes in other sources are told apart, runs through the
