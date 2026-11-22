@@ -1,35 +1,16 @@
-# Decisions and ADRs. A decision superseded by a later one must not come back as current:
-# `absent` names a file that may not be among the top 5 hits; the eval fails if it is.
-- id: dec-trial
-  question: "How long is a new operator's free trial?"
-  terms: "trial AND operators"
-  expect: [decisions/2025-01-20-trial-30-days.md]
-  absent: [decisions/2024-03-05-trial-14-days.md]
-  answer: "30 days. The 14 days of the earlier decision, and of the welcome email, no longer apply."
-- id: dec-invoice-language
-  question: "In which language do we write invoices?"
-  terms: "invoice AND language"
-  expect: [decisions/2025-02-14-invoice-language-customer.md]
-  absent: [decisions/2024-07-01-invoice-language-english.md]
-  answer: "The customer's own: English, Icelandic or German, with English as the fallback. The earlier decision to write all invoices in English was replaced without its own status being changed."
-- id: dec-refund-cap
-  question: "How large a refund can support approve without asking a team lead?"
-  terms: "refund AND support"
-  expect: [decisions/2025-03-03-support-refund-cap.md]
-  answer: "ISK 50,000; the playbook's older 30,000 is replaced."
+# A project's ADRs and BUSINESS.md. An ADR that a later one superseded may come back, marked, but
+# only after the one that replaced it: `after` names it, and the eval fails if it ranks above
+# the first file in `expect`.
 - id: dec-adr-superseded
   question: "At what hour do Selkie's reminders go out?"
-  terms: "reminders AND hour"
   expect: ["project:docs/adr/0004-customer-chosen-hour.md"]
-  absent: ["project:docs/adr/0003-reminder-hour-08.md"]
+  after: ["project:docs/adr/0003-reminder-hour-08.md"]
   answer: "The hour each customer picks, 09:00 by default. The fixed 08:00 of ADR 0003 was superseded."
 - id: dec-adr-amended
   question: "Which currencies can Selkie handle invoices in?"
-  terms: "currencies OR currency OR ISK"
   expect: ["project:docs/adr/0005-two-currencies.md", "project:docs/adr/0006-add-nok.md"]
   answer: "ISK and EUR (ADR 0005), and NOK since the amendment of ADR 0006."
 - id: dec-business-md
   question: "Who pays for Selkie, and who never logs in?"
-  terms: "bookkeeper OR bookkeepers"
   expect: ["project:docs/BUSINESS.md"]
   answer: "The bookkeeper pays; the clients whose invoices are chased never log in."

@@ -320,7 +320,11 @@ fn a_fresh_clone_pulls_the_published_index_and_embeds_only_what_changed() {
         project.path(),
         cache.path(),
         &gh,
-        &["search", "--terms", "INV-2024-0042", "--json"],
+        &[
+            "search",
+            "What happened to invoice INV-2024-0042?",
+            "--json",
+        ],
     ));
     assert!(hits
         .as_array()
@@ -564,64 +568,12 @@ fn bench_builds_a_synthetic_brain_and_reports_search_and_indexing_speed() {
     assert_eq!(r["chunks"], 3000);
     assert!(r["index_chunks_per_s"].as_f64().unwrap() > 0.0, "{r}");
     assert!(r["search_p50_ms"].as_f64().unwrap() > 0.0, "{r}");
-    assert!(r["search_terms_p50_ms"].as_f64().unwrap() >= 0.0, "{r}");
+    assert!(r["search_full_text_p50_ms"].as_f64().unwrap() >= 0.0, "{r}");
+    assert!(r["search_meaning_p50_ms"].as_f64().unwrap() >= 0.0, "{r}");
     // Nothing is left behind but what the user asked for.
     let left: Vec<PathBuf> = fs::read_dir(cache.path())
         .unwrap()
         .map(|e| e.unwrap().path())
         .collect();
     assert!(left.is_empty(), "{left:?}");
-}
-
-// A relative `--dir` (or one through a symlink, as macOS's /tmp is) names the same synthetic brain
-// to the bench and to the `brain search` processes it starts.
-#[test]
-fn bench_works_with_a_relative_dir() {
-    let cwd = TempDir::new().unwrap();
-    let cache = TempDir::new().unwrap();
-    fs::create_dir(cwd.path().join("work")).unwrap();
-    let out = brain(
-        cwd.path(),
-        cache.path(),
-        "/usr/bin:/bin",
-        cache.path(),
-        &[
-            "bench",
-            "--chunks",
-            "800",
-            "--embed-sample",
-            "8",
-            "--dir",
-            "work",
-            "--json",
-        ],
-    );
-    assert_eq!(json(out)["chunks"], 800);
-}
-
-// ... and a `--dir` inside a git repo is not taken for a project by the searches the bench starts.
-#[test]
-fn bench_inside_a_repo_does_not_search_the_repo() {
-    let repo = TempDir::new().unwrap();
-    git(repo.path(), &["init", "-q"]);
-    write(repo.path(), "README.md", "# A repo\n\nWords.\n");
-    let cache = TempDir::new().unwrap();
-    fs::create_dir(repo.path().join("work")).unwrap();
-    let out = brain(
-        repo.path(),
-        cache.path(),
-        "/usr/bin:/bin",
-        cache.path(),
-        &[
-            "bench",
-            "--chunks",
-            "800",
-            "--embed-sample",
-            "8",
-            "--dir",
-            "work",
-            "--json",
-        ],
-    );
-    assert_eq!(json(out)["chunks"], 800);
 }

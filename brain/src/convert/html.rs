@@ -335,7 +335,6 @@ fn convert_html(html: &str, drop_quotes: bool) -> Converted {
         title: title.filter(|t| !t.is_empty()),
         date,
         prose: true,
-        meta: Default::default(),
     }
 }
 

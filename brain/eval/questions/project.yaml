@@ -2,37 +2,29 @@
 # `project:` prefix names a file of the project source; a bare path is in the outside corpus.
 - id: proj-pause
   question: "For how long does a paused invoice stay paused?"
-  terms: "paused OR pause"
   expect: ["project:docs/PRODUCT.md"]
   answer: "Until someone resumes it; it never expires on its own."
 - id: proj-money
   question: "Why are amounts never decimals in the database?"
-  terms: "decimal OR decimals OR floating"
   expect: ["project:docs/adr/0002-money-as-integers.md"]
   answer: "Floating point can't hold most decimal amounts exactly, so amounts are integers in the smallest unit."
 - id: proj-rollback
   question: "What do I type to undo a bad release?"
-  terms: "ROLLBACK-77"
   expect: ["project:docs/runbooks/deploy.md"]
   answer: "make rollback, then the token ROLLBACK-77."
 - id: proj-queue
   question: "Why didn't we use a message broker for the reminders?"
-  terms: "broker"
   expect: ["project:docs/adr/0001-postgres-queue.md"]
   answer: "A broker is one more thing to run and back up; due reminders sit in a Postgres table."
 - id: proj-weekend
   question: "Can a customer get a reminder on a Saturday?"
-  terms: "weekend OR holiday OR Saturday"
   expect: ["project:docs/PRODUCT.md"]
   answer: "No; reminders never go out on a weekend or an Icelandic public holiday."
 - id: mixed-rate-limit
   question: "How fast may the reminder worker look invoices up, given the API's request limit?"
-  terms: "lookups OR limit OR requests"
   expect: ["project:docs/ARCHITECTURE.md", "product/api-rate-limits.md"]
   answer: "At most 8 lookups a second from one shared bucket, well under the API's 600 requests a minute per key."
 - id: outside-still-found
   question: "What is the maximum I can claim for a hotel when travelling?"
-  terms: "hotel OR travelling OR claim"
   expect: [policies/travel-expenses.md]
-  accept: [notes/trip-limits.md]
   answer: "The travel expenses policy sets the limits."

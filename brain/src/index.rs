@@ -12,11 +12,11 @@ use std::{
 };
 
 use crate::{
+    adr::{self, Status},
     chunk::{self, Params},
     convert::{self, Format, Outcome},
-    decisions, dedup, doc,
+    dedup, doc,
     embed::Embedder,
-    notes,
     sources::{Kind, Source, PROJECT_FILES},
     store::{self, FileRow, NewChunk, NewFile, Store},
 };
@@ -264,6 +264,22 @@ fn git_dates(source: &Source) -> HashMap<String, String> {
 struct Pending {
     file: NewFile,
     texts: Vec<String>,
+    /// The file's size and modification time when it was read, if they can be trusted.
+    stamp: Option<(i64, i64)>,
+}
+
+/// A file's size and modification time in ns, to tell later whether it is the file that was read.
+/// A file changed within 2 s of now is stamped with no time: a filesystem that stamps to the
+/// second could have it change again without the stamp showing it.
+fn stamp_of(path: &Path) -> Option<(i64, i64)> {
+    let meta = fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let age = std::time::SystemTime::now().duration_since(modified).ok()?;
+    let ns = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos() as i64;
+    Some((meta.len() as i64, if age.as_secs() < 2 { 0 } else { ns }))
 }
 
 /// What is embedded for a chunk: its context header (cut to `HEADER_TOKENS`), then its text.
@@ -302,6 +318,9 @@ pub fn index_until(
     } = walk(source)?;
     let known = store.files()?;
     let known_unconverted = store.unconverted()?;
+    let stamps = store.stamps()?;
+    // The stamps of files whose content is what the index holds; those queued are added once stored.
+    let mut seen: Vec<(&str, (i64, i64))> = Vec::new();
     let on_disk: BTreeSet<&str> = files.iter().map(|f| f.rel.as_str()).collect();
     let mut report = Report::default();
 
@@ -329,19 +348,33 @@ pub fn index_until(
         },
     ) in files.iter().enumerate()
     {
-        let bytes = match fs::read(full) {
-            Ok(b) => b,
-            Err(e) => {
-                // Removed meanwhile, or not ours to read: leave it out, and the rest is indexed.
-                skipped.push(format!("{rel} (cannot read: {e})"));
-                if known.contains_key(rel) || known_unconverted.contains_key(rel) {
-                    store.remove_file(rel)?;
-                    report.files_removed += 1;
+        // A file whose size and modification time are what they were when its content was last
+        // read is the same file: it is not read again. What the index holds for it stands in for
+        // the hash, and the branches below that find the hash unchanged take it from there.
+        let stamp = stamp_of(full);
+        let trusted = stamp
+            .filter(|s| s.1 != 0 && stamps.get(rel) == Some(s))
+            .and_then(|_| {
+                known
+                    .get(rel)
+                    .map(|r| r.hash.clone())
+                    .or_else(|| known_unconverted.get(rel).map(|(h, _)| h.clone()))
+            });
+        let (hash, bytes) = match trusted {
+            Some(hash) => (hash, Vec::new()),
+            None => match fs::read(full) {
+                Ok(b) => (format!("{:x}", Sha256::digest(&b)), b),
+                Err(e) => {
+                    // Removed meanwhile, or not ours to read: leave it out, and the rest is indexed.
+                    skipped.push(format!("{rel} (cannot read: {e})"));
+                    if known.contains_key(rel) || known_unconverted.contains_key(rel) {
+                        store.remove_file(rel)?;
+                        report.files_removed += 1;
+                    }
+                    continue;
                 }
-                continue;
-            }
+            },
         };
-        let hash = format!("{:x}", Sha256::digest(&bytes));
         if let Some((known_hash, reason)) = known_unconverted.get(rel) {
             if *known_hash == hash {
                 unconverted.push(Unconverted {
@@ -349,6 +382,7 @@ pub fn index_until(
                     path: rel.clone(),
                     reason: reason.clone(),
                 });
+                seen.extend(stamp.map(|s| (rel.as_str(), s)));
                 continue;
             }
         }
@@ -380,10 +414,11 @@ pub fn index_until(
                     store.refresh_date(rel, &date)?;
                     report.dates_refreshed += 1;
                 }
+                seen.extend(stamp.map(|s| (rel.as_str(), s)));
                 continue;
             }
         }
-        let mut converted = match format
+        let converted = match format
             .cached()
             .then(|| convert::cache_get(&cache, &cache_key))
         {
@@ -399,6 +434,7 @@ pub fn index_until(
                     }
                     Outcome::Unconverted(reason) => {
                         store.put_unconverted(rel, &hash, &reason)?;
+                        seen.extend(stamp.map(|s| (rel.as_str(), s)));
                         if known.contains_key(rel) {
                             report.files_changed += 1;
                         }
@@ -413,12 +449,6 @@ pub fn index_until(
             }
         };
         let (kind, meta) = entry_of(source, rel, &converted);
-        if let Some(note) = &meta.note {
-            // A note is as old as it was last checked against its sources, and is found by what
-            // it says it answers.
-            converted.date = note.verified.clone().or(converted.date);
-            converted.text = notes::indexed_text(note, &converted.text);
-        }
         let date = fallback_date(converted.date.as_ref());
         let title = converted.title.clone().unwrap_or_else(|| {
             Path::new(rel)
@@ -463,6 +493,7 @@ pub fn index_until(
                 chunks: new_chunks,
             },
             texts,
+            stamp,
         });
         if queued >= GROUP {
             report.embedded_chunks += flush(store, embedder, &mut pending)?;
@@ -477,6 +508,7 @@ pub fn index_until(
         }
     }
     report.embedded_chunks += flush(store, embedder, &mut pending)?;
+    store.set_stamps(&seen)?;
     if store.dir.join("convert").is_dir() {
         convert::cache_prune(&cache, &cached_keys);
     }
@@ -484,7 +516,7 @@ pub fn index_until(
     // Of files that are copies of each other only the newest ranks; dates may have moved.
     let copies = dedup::copies(&store.dedup_items()?);
     store.set_copies(&copies)?;
-    decisions::resolve(store)?;
+    adr::resolve(store)?;
 
     skipped.sort();
     unconverted.sort_by(|a, b| a.path.cmp(&b.path));
@@ -500,31 +532,14 @@ pub fn index_until(
     Ok(report)
 }
 
-/// What a file is, and what it says about being decided or replaced, or made from. Only the
-/// files of `decisions/` and a project's ADRs carry the first, and those of `notes/` the
-/// second; a status in any other file is just text.
-fn entry_of(source: &Source, rel: &str, converted: &convert::Converted) -> (String, doc::Meta) {
+/// What a file is, and what it says about being replaced or amended: only a project's ADRs say
+/// either, in their status line; a status in any other file is just text.
+fn entry_of(source: &Source, rel: &str, converted: &convert::Converted) -> (String, Status) {
     match &source.kind {
-        Kind::Project { docs } if doc::is_adr(rel, docs) => {
-            let mut meta = doc::adr_status(&converted.text);
-            meta.project = None;
-            ("adr".into(), meta)
+        Kind::Project { docs } if adr::is_adr(rel, docs) => {
+            ("adr".into(), adr::status_of(&converted.text))
         }
-        Kind::Project { .. } => ("raw".into(), doc::Meta::default()),
-        Kind::Outside => {
-            let kind = doc::kind_of(rel, &converted.meta);
-            let meta = match kind.as_str() {
-                "raw" => doc::Meta::default(),
-                // A note says what it was made from, not whether it is decided or replaced.
-                "note" => doc::Meta {
-                    project: converted.meta.project.clone(),
-                    note: Some(converted.meta.note.clone().unwrap_or_default()),
-                    ..doc::Meta::default()
-                },
-                _ => converted.meta.clone(),
-            };
-            (kind, meta)
-        }
+        _ => ("raw".into(), Status::default()),
     }
 }
 
@@ -543,6 +558,7 @@ fn flush(
     let mut vectors = embedder.embed_passages(&refs)?.into_iter();
     let mut total = 0;
     let mut files = Vec::new();
+    let mut stamps = Vec::new();
     for mut p in pending.drain(..) {
         for c in &mut p.file.chunks {
             c.vector = vectors
@@ -550,9 +566,16 @@ fn flush(
                 .context("embedder returned too few vectors")?;
             total += 1;
         }
+        stamps.push(p.stamp);
         files.push(p.file);
     }
     store.put_files(&files)?;
+    let stamped: Vec<(&str, (i64, i64))> = files
+        .iter()
+        .zip(stamps)
+        .filter_map(|(f, s)| s.map(|s| (f.path.as_str(), s)))
+        .collect();
+    store.set_stamps(&stamped)?;
     Ok(total)
 }
 
@@ -642,7 +665,6 @@ mod tests {
             kind: Kind::Project { docs: docs.into() },
             root: brain.path().to_path_buf(),
             exists: true,
-            update: false,
         }
     }
 
@@ -790,11 +812,7 @@ mod tests {
         };
         assert_eq!(
             row("decisions/2024-05-14-x.md"),
-            (
-                "Second phone".into(),
-                "2024-05-14".into(),
-                "decision".into()
-            )
+            ("Second phone".into(), "2024-05-14".into(), "raw".into())
         );
         let (title, date, kind) = row("plain.txt");
         assert_eq!((title.as_str(), kind.as_str()), ("plain", "raw"));
@@ -802,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn only_decisions_and_adrs_carry_a_status_and_a_decisions_kind_comes_from_its_frontmatter() {
+    fn only_a_projects_adrs_carry_a_status() {
         let status = |store: &Store, p: &str| -> (String, String, String) {
             store
                 .conn
@@ -813,31 +831,17 @@ mod tests {
                 )
                 .unwrap()
         };
-        let front = "---\nkind: process\nstatus: superseded\nsuperseded-by: later\n---\nx";
-        let (brain, cache) = setup(&[
-            ("decisions/2024-01-01-a.md", front),
-            ("decisions/2024-01-02-b.md", "no frontmatter"),
-            ("notes/n.md", front),
-            ("policy.md", front),
-        ]);
+        // In an outside source a status line is just text.
+        let (brain, cache) = setup(&[(
+            "docs/adr/0001-a.md",
+            "# 0001\n\nStatus: superseded by 0002\n",
+        )]);
         run(&brain, &cache);
         let store = Store::open(&cache.path().join("index.sqlite"))
             .unwrap()
             .unwrap();
         assert_eq!(
-            status(&store, "decisions/2024-01-01-a.md"),
-            ("process".into(), "superseded".into(), "later".into())
-        );
-        assert_eq!(
-            status(&store, "decisions/2024-01-02-b.md"),
-            ("decision".into(), "".into(), "".into())
-        );
-        assert_eq!(
-            status(&store, "notes/n.md"),
-            ("note".into(), "".into(), "".into())
-        );
-        assert_eq!(
-            status(&store, "policy.md"),
+            status(&store, "docs/adr/0001-a.md"),
             ("raw".into(), "".into(), "".into())
         );
 
@@ -963,6 +967,36 @@ mod tests {
             0,
             "and then it is stable"
         );
+    }
+
+    #[test]
+    fn a_file_with_the_stamp_it_had_is_not_read_again_and_one_with_another_is() {
+        let (brain, cache) = setup(&[("a.md", "# A\n\nfirst text")]);
+        let set = |secs: u64| {
+            let when = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+            fs::File::options()
+                .write(true)
+                .open(brain.path().join("a.md"))
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+        };
+        set(1_700_000_000);
+        assert_eq!(run(&brain, &cache).files_changed, 1);
+        // Stamped now: the same size and time mean the same file, whatever the bytes say.
+        run(&brain, &cache);
+        fs::write(brain.path().join("a.md"), "# A\n\nsecond tex").unwrap();
+        set(1_700_000_000);
+        assert_eq!(run(&brain, &cache).files_changed, 0);
+        // A newer time means it is read: the content is new.
+        set(1_700_000_100);
+        let r = run(&brain, &cache);
+        assert_eq!((r.files_changed, r.embedded_chunks), (1, 1));
+        // And a file edited right now is never trusted, however equal its size.
+        fs::write(brain.path().join("a.md"), "# A\n\nthird text!").unwrap();
+        run(&brain, &cache);
+        fs::write(brain.path().join("a.md"), "# A\n\nfourth tex!").unwrap();
+        assert_eq!(run(&brain, &cache).files_changed, 1);
     }
 
     fn git(dir: &Path, envs: &[(&str, &str)], args: &[&str]) {
@@ -1324,12 +1358,15 @@ mod tests {
     }
 
     #[test]
-    fn a_decision_is_never_hidden_as_the_copy_of_a_file() {
-        let decision = "---\ntitle: Same\nkind: product\nstatus: accepted\n---\nWe keep prices in whole krónur and never in fractions, because every ledger and invoice the company has ever issued is in whole krónur, and nobody could explain a fraction to a customer.";
-        let (brain, cache) = setup(&[
-            ("decisions/2024-01-01-prices.md", decision),
-            ("z-copy.md", decision),
+    fn an_adr_is_never_hidden_as_the_copy_of_a_file() {
+        let adr = "# Same\n\nStatus: accepted\n\nWe keep prices in whole krónur and never in fractions, because every ledger and invoice the company has ever issued is in whole krónur, and nobody could explain a fraction to a customer.";
+        let (dir, cache) = setup(&[
+            ("docs/adr/0001-prices.md", adr),
+            ("docs/adr/0002-copy.md", adr),
         ]);
-        assert_eq!(run(&brain, &cache).duplicates, 0);
+        let source = project(&dir, "docs");
+        let mut store = Store::create(&cache.path().join("index.sqlite"), dir.path()).unwrap();
+        let report = index(&source, &mut store, &mut Fake, false).unwrap();
+        assert_eq!(report.duplicates, 0);
     }
 }

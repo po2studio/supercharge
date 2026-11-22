@@ -76,7 +76,7 @@ Medium (default). This is the first runnable code in the bundle, so the binary g
 
 **Search contract.**
 - Invocation: `brain search "<question>" [-k N] [--json]`, run from the project's root. It first indexes what changed in each source.
-- It runs full-text (BM25, any of the question's words, exact tokens such as IDs, codes, names and quoted phrases weighted up) and by-meaning search on the question as given, fuses them by rank, and returns the top `k` (default 5), one hit per file: its source, path, heading, date and the best passage.
+- It runs by-meaning search on the question as given, and adds the best full-text (BM25) matches of the exact tokens in it (IDs, codes, acronyms, quoted phrases; each only if it matches under 1% of an index's chunks), fuses them by rank, and returns the top `k` (default 5), one hit per file: its source, path, heading, date and the best passage. Full-text search of every word of the question lowered recall on plain questions in the eval (0.906 by meaning alone, 0.80 fused with it), so words are left to the by-meaning half.
 - Each hit: `{source, path, file, title, heading, date, kind, status, score, snippet, versions}`. `date` is the frontmatter date, else the file's last git commit date, else its mtime.
 - On the eval, the fused search must find at least as many answers in the top 5 as the best of full-text or by-meaning alone.
 
@@ -148,7 +148,7 @@ Medium (default). This is the first runnable code in the bundle, so the binary g
   Supporting other languages costs no speed at this size. Slice 7 measured EmbeddingGemma 2 (Apache 2.0, 256 dimensions) on the full eval and kept e5: hybrid recall@5 0.917 → 0.911, indexing about 7× slower, the binary 2.2× bigger ([runs/2026-11-22-brain-model-choice.md](../../runs/2026-11-22-brain-model-choice.md)).
 - **Brute force, no approximate-nearest-neighbour index.** 50k × 256-dim cosine took 14 ms even in JS. A 1-bit first pass plus int8 rescoring covers the 1M wall without a graph to build or keep in memory.
 - **Distribution:** the skills CLI (vercel-labs/skills) copies the whole skill folder and has no install hook. It shows only the `description` (as a hint cut at 57 characters, and in full in a panel), so that's where the size goes, and first-run setup repeats it before downloading.
-- **The PR check runs in skills, not in project CI.** Project CI would need a token for the brain repo. `build-slice` runs `brain check --changed` before opening its PR, and the brain repo's own CI runs `brain check`.
+- **No PR check.** Slice 5 ran `brain check --changed` in `build-slice` and `brain check` in the brain repo's CI; slice 8 removed both (ADR 0005).
 - **Owner, 2026-11-21:** replanned in the one-issue format of feature [0004](0004-readable-issues.md). The slice issues #16–#20, #22 and #23 are closed; their criteria, risks and touches are below, unchanged, and [#15](https://github.com/po2studio/supercharge/issues/15) carries the checklist. Two titles now state the outcome: slice 5 (was "Checks: nothing touched goes unreviewed") and slice 7 (was "Model bake-off on the full eval").
 - *Assumptions, not asked:*
   - writing to the brain means a direct commit and push, gated by the admission rule, lint and `check`, not by a second human approval;

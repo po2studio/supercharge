@@ -1,5 +1,6 @@
-//! `brain eval`: index a corpus, ask the golden questions, report recall@5, MRR, p50 latency and
-//! indexing speed against a committed baseline.
+//! `brain eval`: index a corpus, ask the golden questions as plain questions, report recall@5, MRR,
+//! p50 latency and indexing speed against a committed baseline. It measures the two halves of the
+//! search (full-text, by meaning) as well as the fused search `brain search` runs.
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -7,8 +8,8 @@ use std::{fs, path::Path, time::Instant};
 
 use crate::{
     embed::Embedder,
-    index, notes,
-    search::{self, Opened, Query},
+    index,
+    search::{self, Mode, Opened, Query},
     sources::{self, Source},
     store::Store,
 };
@@ -22,20 +23,18 @@ const SPEED_FACTOR: f64 = 4.0;
 struct Question {
     id: String,
     question: String,
-    terms: Option<String>,
     expect: Vec<String>,
-    /// Files that answer the question as well as `expect` does: a fresh note that summarises the
-    /// raw files. One of them in the top 5 is a right answer, and its rank counts like theirs.
-    #[serde(default)]
-    accept: Vec<String>,
-    /// Files that must not be among the top 5 hits: what a decision superseded, or an older version
-    /// of the answer.
+    /// Files that must not be among the top 5 hits: an older version of the answer.
     #[serde(default)]
     absent: Vec<String>,
+    /// Files that may come back, but only after the first of `expect`: an ADR that a later one
+    /// superseded.
+    #[serde(default)]
+    after: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Mode {
+pub struct Score {
     pub recall_at_5: f64,
     pub mrr: f64,
 }
@@ -48,9 +47,11 @@ pub struct Results {
     pub sources: usize,
     pub files: usize,
     pub chunks: usize,
-    pub terms: Mode,
-    pub about: Mode,
-    pub hybrid: Mode,
+    /// The full-text half alone, the by-meaning half alone, and the two fused: what `brain
+    /// search` runs.
+    pub full_text: Score,
+    pub meaning: Score,
+    pub hybrid: Score,
     pub p50_ms: f64,
     pub chunks_per_s: f64,
 }
@@ -75,15 +76,6 @@ fn load_questions(dir: &Path) -> Result<Vec<Question>> {
         }
     }
     Ok(out)
-}
-
-/// When a question has no `terms`: its words, any of which may match.
-fn words_of(question: &str) -> String {
-    question
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.chars().count() >= 3)
-        .collect::<Vec<_>>()
-        .join(" OR ")
 }
 
 pub fn p50(mut v: Vec<f64>) -> f64 {
@@ -131,7 +123,7 @@ pub fn measure(
         })
         .collect::<Result<_>>()?;
     for q in &questions {
-        for e in q.expect.iter().chain(&q.accept).chain(&q.absent) {
+        for e in q.expect.iter().chain(&q.absent).chain(&q.after) {
             let (want_project, path) = match e.strip_prefix("project:") {
                 Some(p) => (true, p),
                 None => (false, e.as_str()),
@@ -160,83 +152,58 @@ pub fn measure(
     let secs = started.elapsed().as_secs_f64();
     let report = (files, chunks, embedded);
 
-    // A note a question expects must be fresh, or the question would test the trap, not the note.
-    let ctx = notes::Ctx::new(&opened);
-    for q in &questions {
-        for e in q.expect.iter().chain(&q.accept) {
-            if let Some(n) = opened.iter().position(|o| !o.is_project()) {
-                if e.starts_with("notes/") && ctx.is_stale(n, e)? {
-                    bail!(
-                        "question {} expects {e}, which is stale: rerun brain/scripts/make-eval-notes.py",
-                        q.id
-                    );
-                }
-            }
-        }
-    }
-
+    const MODES: [(Mode, &str); 3] = [
+        (Mode::FullText, "full-text"),
+        (Mode::Meaning, "meaning"),
+        (Mode::Both, "hybrid"),
+    ];
     let (mut sums, mut latencies) = ([(0.0, 0.0); 3], Vec::new());
     let mut returned: Vec<String> = Vec::new();
     for q in &questions {
         let mut ranks = Vec::new();
-        let terms = q.terms.clone().unwrap_or_else(|| words_of(&q.question));
-        let modes = [
-            Query {
-                terms: Some(&terms),
-                about: None,
+        for (i, (mode, name)) in MODES.iter().enumerate() {
+            let query = Query {
+                question: &q.question,
                 k: 10,
-            },
-            Query {
-                terms: None,
-                about: Some(&q.question),
-                k: 10,
-            },
-            Query {
-                terms: Some(&terms),
-                about: Some(&q.question),
-                k: 10,
-            },
-        ];
-        for (i, query) in modes.iter().enumerate() {
+                mode: *mode,
+            };
             let t = Instant::now();
-            let hits = search::search(&opened, embedder, query, search::EXACT_LIMIT)?;
-            for a in &q.absent {
-                if hits.iter().take(5).any(|h| is_expected(h, a)) {
-                    returned.push(format!(
-                        "question {}: {a} is among the top 5 hits of the {} search, and should have been left out",
-                        q.id,
-                        ["terms", "about", "hybrid"][i]
-                    ));
-                }
-            }
-            if i == 2 {
+            let hits = search::search(&opened, embedder, &query, search::EXACT_LIMIT)?;
+            if *mode == Mode::Both {
                 latencies.push(t.elapsed().as_secs_f64() * 1000.0);
             }
             let rank_of = |p: &str| hits.iter().position(|h| is_expected(h, p));
+            for a in &q.absent {
+                if rank_of(a).is_some_and(|r| r < 5) {
+                    returned.push(format!(
+                        "question {}: {a} is among the top 5 hits of the {name} search, and should have been left out",
+                        q.id
+                    ));
+                }
+            }
+            let first = q.expect.iter().filter_map(|e| rank_of(e)).min();
+            for a in &q.after {
+                if let (Some(r), Some(f)) = (rank_of(a), first) {
+                    if r < f {
+                        returned.push(format!(
+                            "question {}: {a} ranks above {} in the {name} search, and should come after it",
+                            q.id, q.expect[0]
+                        ));
+                    }
+                }
+            }
             let found = q
                 .expect
                 .iter()
                 .filter(|e| rank_of(e).is_some_and(|r| r < 5))
                 .count();
-            // A note that answers it counts for every file it summarises.
-            let accepted = q.accept.iter().any(|a| rank_of(a).is_some_and(|r| r < 5));
-            sums[i].0 += if accepted {
-                1.0
-            } else {
-                found as f64 / q.expect.len() as f64
-            };
-            let first = q
-                .expect
-                .iter()
-                .chain(&q.accept)
-                .filter_map(|e| rank_of(e))
-                .min();
+            sums[i].0 += found as f64 / q.expect.len() as f64;
             sums[i].1 += first.map_or(0.0, |r| 1.0 / (r as f64 + 1.0));
             ranks.push(first.map_or("-".to_string(), |r| (r + 1).to_string()));
         }
         if details {
             eprintln!(
-                "{:<22} terms {:>2}  about {:>2}  hybrid {:>2}",
+                "{:<22} full-text {:>2}  meaning {:>2}  hybrid {:>2}",
                 q.id, ranks[0], ranks[1], ranks[2]
             );
         }
@@ -245,7 +212,7 @@ pub fn measure(
         bail!("{}", returned.join("\n"));
     }
     let n = questions.len().max(1) as f64;
-    let mode = |i: usize| Mode {
+    let score = |i: usize| Score {
         recall_at_5: round(sums[i].0 / n),
         mrr: round(sums[i].1 / n),
     };
@@ -255,9 +222,9 @@ pub fn measure(
         sources: live.len(),
         files: report.0,
         chunks: report.1,
-        terms: mode(0),
-        about: mode(1),
-        hybrid: mode(2),
+        full_text: score(0),
+        meaning: score(1),
+        hybrid: score(2),
         p50_ms: round(p50(latencies)),
         chunks_per_s: round(report.2 as f64 / secs.max(1e-9)),
     })
@@ -274,19 +241,20 @@ fn tempdir() -> Result<std::path::PathBuf> {
 }
 
 pub fn render(r: &Results) -> String {
-    let row = |name: &str, m: &Mode| format!("{name:<8} {:>9.3} {:>7.3}\n", m.recall_at_5, m.mrr);
+    let row = |name: &str, m: &Score| format!("{name:<10} {:>9.3} {:>7.3}\n", m.recall_at_5, m.mrr);
     format!(
-        "{} questions over {} files, {} chunks, {} sources\n{:<8} {:>9} {:>7}\n{}{}{}search p50 {:.0} ms, indexing {:.1} chunks/s\n",
+        "{} questions over {} files, {} chunks, {} sources\n{:<10} {:>9} {:>7}\n{}{}{}search p50 {:.0} ms, indexing {:.1} chunks/s\n",
         r.questions, r.files, r.chunks, r.sources, "", "recall@5", "MRR",
-        row("terms", &r.terms), row("about", &r.about), row("hybrid", &r.hybrid),
+        row("full-text", &r.full_text), row("meaning", &r.meaning), row("hybrid", &r.hybrid),
         r.p50_ms, r.chunks_per_s
     )
 }
 
-/// What got worse than the baseline allows, and whether hybrid still beats terms alone.
+/// What got worse than the baseline allows, and whether the fused search still finds at least as
+/// many answers as the better of its two halves.
 pub fn regressions(now: &Results, base: &Results) -> Vec<String> {
     let mut out = Vec::new();
-    let mut quality = |name: &str, now: &Mode, base: &Mode| {
+    let mut quality = |name: &str, now: &Score, base: &Score| {
         for (metric, a, b) in [
             ("recall@5", now.recall_at_5, base.recall_at_5),
             ("MRR", now.mrr, base.mrr),
@@ -298,8 +266,8 @@ pub fn regressions(now: &Results, base: &Results) -> Vec<String> {
             }
         }
     };
-    quality("terms", &now.terms, &base.terms);
-    quality("about", &now.about, &base.about);
+    quality("full-text", &now.full_text, &base.full_text);
+    quality("meaning", &now.meaning, &base.meaning);
     quality("hybrid", &now.hybrid, &base.hybrid);
     if now.p50_ms > base.p50_ms * SPEED_FACTOR && now.p50_ms > 50.0 {
         out.push(format!(
@@ -313,10 +281,11 @@ pub fn regressions(now: &Results, base: &Results) -> Vec<String> {
             now.chunks_per_s, base.chunks_per_s
         ));
     }
-    if now.hybrid.recall_at_5 <= now.terms.recall_at_5 {
+    let best = now.full_text.recall_at_5.max(now.meaning.recall_at_5);
+    if now.hybrid.recall_at_5 < best {
         out.push(format!(
-            "hybrid recall@5 {:.3} does not beat terms-only {:.3}",
-            now.hybrid.recall_at_5, now.terms.recall_at_5
+            "hybrid recall@5 {:.3} is below the better of its halves, {best:.3}",
+            now.hybrid.recall_at_5
         ));
     }
     out
@@ -363,17 +332,17 @@ mod tests {
     use super::*;
 
     fn results(recall: f64) -> Results {
-        let m = Mode {
+        let m = Score {
             recall_at_5: recall,
             mrr: recall,
         };
         Results {
             questions: 10,
-            terms: Mode {
+            full_text: Score {
                 recall_at_5: 0.3,
                 mrr: 0.3,
             },
-            about: m.clone(),
+            meaning: m.clone(),
             hybrid: m,
             p50_ms: 20.0,
             chunks_per_s: 12.0,
@@ -390,12 +359,15 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_must_beat_terms_only() {
+    fn hybrid_must_find_as_many_answers_as_the_better_half() {
+        let base = results(0.9);
         let mut r = results(0.9);
-        r.terms.recall_at_5 = 0.9;
-        assert!(regressions(&r, &r)
+        r.full_text.recall_at_5 = 0.95;
+        assert!(regressions(&r, &base)
             .iter()
-            .any(|b| b.contains("does not beat")));
+            .any(|b| b.contains("below the better of its halves")));
+        r.full_text.recall_at_5 = 0.9;
+        assert!(regressions(&r, &base).is_empty());
     }
 
     #[test]
@@ -411,11 +383,6 @@ mod tests {
         let mut laggy = base.clone();
         laggy.p50_ms = 400.0;
         assert!(regressions(&laggy, &base).iter().any(|b| b.contains("p50")));
-    }
-
-    #[test]
-    fn a_question_without_terms_uses_its_words() {
-        assert_eq!(words_of("Can I bring my dog?"), "Can OR bring OR dog");
     }
 
     #[test]

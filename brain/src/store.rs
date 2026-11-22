@@ -5,11 +5,11 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
-use crate::{chunk, dedup, doc::Meta, embed, vecs};
+use crate::{adr::Status, chunk, dedup, embed, vecs};
 
 const SCHEMA: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -20,9 +20,8 @@ CREATE TABLE files (
     title TEXT NOT NULL,
     date TEXT NOT NULL,
     kind TEXT NOT NULL,
-    project TEXT NOT NULL DEFAULT '',
-    -- What a decision or ADR says (see `decisions::resolve`): `status` and the two links are what
-    -- search reads; `meta` is what the file itself declared.
+    -- What an ADR says (see `adr::resolve`): `status` and the two links are what search reads;
+    -- `meta` is what the file itself declared.
     status TEXT NOT NULL DEFAULT '',
     superseded_by TEXT NOT NULL DEFAULT '',
     amended_by TEXT NOT NULL DEFAULT '',
@@ -41,6 +40,8 @@ CREATE TABLE unconverted (
     hash TEXT NOT NULL,
     reason TEXT NOT NULL
 );
+-- Size and modification time of each file when it was read: see `Store::stamps`.
+CREATE TABLE stamps (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL);
 CREATE TABLE chunks (
     id INTEGER PRIMARY KEY,
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -72,23 +73,6 @@ pub struct FileRow {
     pub own_date: Option<String>,
 }
 
-/// A note in the index.
-pub struct NoteRow {
-    pub path: String,
-    pub date: String,
-    pub simhash: Option<u64>,
-    pub meta: Meta,
-}
-
-/// What a file's `meta` column holds: nothing, or what the file declared as JSON.
-fn meta_of(column: &str) -> Result<Meta> {
-    if column.is_empty() {
-        Ok(Meta::default())
-    } else {
-        Ok(serde_json::from_str(column)?)
-    }
-}
-
 /// A chunk ready to be stored.
 pub struct NewChunk {
     pub heading: String,
@@ -105,7 +89,7 @@ pub struct NewFile {
     pub date: String,
     pub own_date: Option<String>,
     pub kind: String,
-    pub meta: Meta,
+    pub meta: Status,
     pub simhash: Option<u64>,
     pub chunks: Vec<NewChunk>,
 }
@@ -239,6 +223,27 @@ impl Store {
         Ok(())
     }
 
+    /// path → (size, modification time in ns) each file had when its content was last read. A
+    /// file with the same stamp as now is the same file, which is how a search that finds nothing
+    /// changed avoids reading every byte of a big source.
+    pub fn stamps(&self) -> Result<HashMap<String, (i64, i64)>> {
+        let mut stmt = self.conn.prepare("SELECT path, size, mtime FROM stamps")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Records the stamp of a file whose indexed content is what was read at that stamp.
+    pub fn set_stamps(&mut self, stamps: &[(&str, (i64, i64))]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for (path, (size, mtime)) in stamps {
+            tx.execute(
+                "INSERT OR REPLACE INTO stamps(path, size, mtime) VALUES (?1, ?2, ?3)",
+                params![path, size, mtime],
+            )?;
+        }
+        Ok(tx.commit()?)
+    }
+
     /// What the index holds about each file in it, by path.
     pub fn files(&self) -> Result<BTreeMap<String, FileRow>> {
         let mut stmt = self
@@ -255,62 +260,6 @@ impl Store {
             ))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// The content hash of a file the index holds or has found to have no text.
-    pub fn hash_of(&self, path: &str) -> Result<Option<String>> {
-        for table in ["files", "unconverted"] {
-            let hash = self
-                .conn
-                .query_row(
-                    &format!("SELECT hash FROM {table} WHERE path = ?1"),
-                    [path],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if hash.is_some() {
-                return Ok(hash);
-            }
-        }
-        Ok(None)
-    }
-
-    /// What a note says about itself; `None` when `path` is no note in this index.
-    pub fn note(&self, path: &str) -> Result<Option<Meta>> {
-        let meta: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT meta FROM files WHERE path = ?1 AND kind = 'note'",
-                [path],
-                |r| r.get(0),
-            )
-            .optional()?;
-        meta.map(|m| meta_of(&m)).transpose()
-    }
-
-    /// Every note in the index, by path.
-    pub fn notes(&self) -> Result<Vec<NoteRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT path, date, simhash, meta FROM files WHERE kind = 'note' ORDER BY path",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-                r.get::<_, String>(3)?,
-            ))
-        })?;
-        rows.map(|row| {
-            let (path, date, simhash, meta) = row?;
-            Ok(NoteRow {
-                path,
-                date,
-                simhash: simhash.map(|f| f as u64),
-                meta: meta_of(&meta)?,
-            })
-        })
-        .collect()
     }
 
     /// path → (content hash, reason) of every file that has no text to index.
@@ -334,8 +283,8 @@ impl Store {
         Ok(())
     }
 
-    /// Every indexed raw file as the duplicate grouping sees it. Decisions, notes and ADRs are
-    /// never copies of one another: what they say is tied to where they are and what they declare.
+    /// Every indexed raw file as the duplicate grouping sees it. ADRs are never copies of one
+    /// another: what they say is tied to where they are and what they declare.
     pub fn dedup_items(&self) -> Result<Vec<dedup::Item>> {
         let mut stmt = self
             .conn
@@ -417,14 +366,13 @@ impl Store {
         for file in files {
             remove(&tx, &file.path)?;
             tx.execute(
-                "INSERT INTO files(path, hash, title, date, kind, project, status, superseded_by, amended_by, meta, own_date, simhash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO files(path, hash, title, date, kind, status, superseded_by, amended_by, meta, own_date, simhash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     file.path,
                     file.hash,
                     file.title,
                     file.date,
                     file.kind,
-                    file.meta.project.as_deref().unwrap_or_default(),
                     file.meta.status.as_deref().unwrap_or_default(),
                     file.meta.superseded_by.as_deref().unwrap_or_default(),
                     file.meta.amended_by.join("\n"),
@@ -482,6 +430,7 @@ fn remove(tx: &rusqlite::Transaction, path: &str) -> Result<()> {
     )?;
     tx.execute("DELETE FROM files WHERE path = ?1", [path])?;
     tx.execute("DELETE FROM unconverted WHERE path = ?1", [path])?;
+    tx.execute("DELETE FROM stamps WHERE path = ?1", [path])?;
     Ok(())
 }
 
@@ -506,7 +455,7 @@ mod tests {
             date: "2024-01-01".into(),
             own_date: None,
             kind: "raw".into(),
-            meta: Meta::default(),
+            meta: Status::default(),
             simhash: None,
             chunks: texts
                 .iter()
