@@ -1110,9 +1110,13 @@ mod tests {
     fn the_exact_list_is_the_best_chunk_of_each_of_the_best_visible_files() {
         let rare = "Ticket QZX-77 was closed.";
         let long = "Notes on many unrelated subjects follow, ".repeat(12);
-        let many = format!(
-            "# Many\n\n{rare}\n\n# Again\n\n{rare}\n\n# And again\n\n{rare}\n\n# Last\n\n{rare}"
-        );
+        let section = |h: &str| {
+            format!(
+                "# {h}\n\n{rare} {}\n\n",
+                "Unrelated filler words. ".repeat(60)
+            )
+        };
+        let many = ["Many", "Again", "And again", "Last"].map(section).concat();
         let mut files: Vec<(String, String)> = (0..12)
             .map(|n| (format!("f{n:02}.md"), format!("# F{n}\n\nPlain text {n}.")))
             .collect();
@@ -1135,6 +1139,18 @@ mod tests {
                 [],
             )
             .unwrap();
+        // `many.md` has a chunk with the token for each section: more than the places there are.
+        let in_many: i64 = s[0]
+            .store
+            .conn
+            .query_row(
+                "SELECT count(*) FROM fts WHERE fts MATCH '\"QZX-77\"' AND rowid IN \
+                 (SELECT c.id FROM chunks c JOIN files f ON f.id = c.file_id WHERE f.path = 'many.md')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(in_many >= EXACT_MATCHES as i64, "{in_many}");
         let listed = fts_files(&s[0].store, "\"QZX-77\"", EXACT_MATCHES).unwrap();
         let mut found: Vec<String> = listed
             .iter()
