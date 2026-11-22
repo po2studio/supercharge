@@ -28,7 +28,7 @@ When a source sets `update: true` and the binary is cached (never download here)
 1. Searches those sources for what the answers or the shipped work make untrue.
 2. Edits those Markdown and text documents in place, minimally, and appends `- YYYY-MM-DD: <what changed> (<where it was decided>)` under a `## History` heading at the end. Never the project's own files (PRs change them). A Word file, PDF or spreadsheet is reported, not edited.
 3. Writes a new document, in the first `update: true` source, only for a decision nothing covers that a future agent would undo or ask about. Technical ones are ADRs.
-4. In a git repo: `git pull --rebase`, commit, push; stop on a conflict.
+4. In a git repo: commit, `git pull --rebase`, push; stop on a conflict.
 5. Reports the files edited and those it could not.
 
 ## Brain repo CI
