@@ -111,48 +111,43 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
 }
 
 #[test]
-fn index_search_change_and_index_again() {
+fn search_indexes_first_finds_what_changed_and_forgets_what_went() {
     let env = small_brain();
-    let first = env.json(&["index", "--json"]);
-    assert_eq!(first["embedded_chunks"], first["chunks"]);
-    // Exact terms, including an ID that isn't valid full-text syntax as typed.
+    // No `index` before: the search brings the index up to date itself. An exact term, including
+    // an ID that isn't valid full-text syntax as typed, asked as a plain question.
     assert_eq!(
-        env.paths(&["search", "--terms", "INV-2024-0042", "--json"]),
-        ["finance/invoices.md"]
+        env.paths(&["search", "Who paid invoice INV-2024-0042?", "--json"])[0],
+        "finance/invoices.md"
     );
     // A question that shares no words with its answer, and an Icelandic one.
-    let paths = env.paths(&[
-        "search",
-        "--about",
-        "Can I bring my dog to work?",
-        "--json",
-        "-k",
-        "5",
-    ]);
+    let paths = env.paths(&["search", "Can I bring my dog to work?", "--json", "-k", "5"]);
     assert!(
         paths.contains(&"policies/animals.md".to_string()),
         "{paths:?}"
     );
     let paths = env.paths(&[
         "search",
-        "--about",
         "Hvað fæ ég marga frídaga á ári?",
         "--json",
         "-k",
         "3",
     ]);
     assert_eq!(paths[0], "icelandic/orlof.md", "{paths:?}");
-    // Hits carry the settled fields.
-    let hits = env.json(&[
+    // The question may be given as separate words.
+    let words = env.paths(&[
         "search",
-        "--terms",
-        "laptops",
-        "--about",
-        "how often are computers replaced",
+        "how",
+        "often",
+        "are",
+        "computers",
+        "replaced",
         "--json",
     ]);
+    assert_eq!(words[0], "it/laptops.md", "{words:?}");
+    // Hits carry the settled fields.
+    let hits = env.json(&["search", "how often are laptops replaced", "--json"]);
     for key in [
-        "id", "path", "title", "heading", "date", "kind", "status", "stale", "score", "snippet",
+        "source", "path", "file", "title", "heading", "date", "kind", "status", "score", "snippet",
         "versions",
     ] {
         assert!(hits[0].get(key).is_some(), "hit lacks {key}: {}", hits[0]);
@@ -163,45 +158,34 @@ fn index_search_change_and_index_again() {
         .collect::<String>()
         + "The door code is zebrafish-7731. ";
     env.write("misc/chat-export.txt", &flat);
-    let after = env.json(&["index", "--json"]);
     assert_eq!(
-        (
-            after["files_changed"].as_u64(),
-            after["embedded_chunks"].as_u64() > Some(1)
-        ),
-        (Some(1), true)
+        env.paths(&["search", "What is the door code, zebrafish?", "--json"])[0],
+        "misc/chat-export.txt"
     );
-    assert_eq!(
-        env.paths(&["search", "--terms", "zebrafish", "--json"]),
-        ["misc/chat-export.txt"]
-    );
-    // Only the changed file is embedded again; `stats` says so.
+    // A changed file is found by its new content, with no `index` between.
     env.write(
         "it/laptops.md",
-        "# Laptops\n\nNew laptops are replaced every three years now.\n",
+        "# Laptops\n\nNew laptops are replaced every three years now, with a walrus sticker.\n",
     );
-    let after = env.json(&["index", "--json"]);
+    assert_eq!(
+        env.paths(&["search", "Which laptops carry a walrus sticker?", "--json"])[0],
+        "it/laptops.md"
+    );
+    // Only the changed file was embedded again; `stats` says so.
+    let last = env.json(&["stats", "--json"])["sources"][0]["last_index"].clone();
     assert_eq!(
         (
-            after["files_changed"].as_u64(),
-            after["embedded_chunks"].as_u64()
+            last["files_changed"].as_u64(),
+            last["embedded_chunks"].as_u64()
         ),
-        (Some(1), Some(1))
-    );
-    assert_eq!(
-        env.json(&["stats", "--json"])["sources"][0]["last_index"]["embedded_chunks"],
-        1
-    );
-    assert_eq!(
-        env.paths(&["search", "--terms", "three", "--json"]),
-        ["it/laptops.md"]
+        (Some(1), Some(1)),
+        "{last}"
     );
     // A deleted file leaves the index.
     fs::remove_file(env.brain.path().join("it/laptops.md")).unwrap();
-    env.json(&["index", "--json"]);
-    assert!(env
-        .paths(&["search", "--terms", "three", "--json"])
-        .is_empty());
+    assert!(!env
+        .paths(&["search", "Which laptops carry a walrus sticker?", "--json"])
+        .contains(&"it/laptops.md".to_string()));
 }
 
 #[test]
@@ -209,7 +193,7 @@ fn nothing_is_written_into_the_brain() {
     let env = small_brain();
     let before = snapshot(env.brain.path());
     env.json(&["index", "--json"]);
-    env.json(&["search", "--terms", "laptops", "--json"]);
+    env.json(&["search", "Which laptops do we use?", "--json"]);
     env.json(&["stats", "--json"]);
     assert_eq!(snapshot(env.brain.path()), before);
     // The index lives under the cache directory, keyed by the root.
@@ -406,24 +390,16 @@ fn one_huge_unbroken_line_is_indexed_in_bounded_time() {
 }
 
 #[test]
-fn search_before_index_says_so() {
-    let env = small_brain();
-    let out = env.cmd(&["search", "--terms", "laptops", "--json"]);
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("brain index"));
-}
-
-#[test]
 fn eval_prints_the_metrics_and_fails_on_a_regression() {
     let corpus = TempDir::new().unwrap();
     let questions = TempDir::new().unwrap();
     let env = small_brain();
-    for (path, _) in [
-        ("policies/animals.md", 0),
-        ("policies/holidays.md", 0),
-        ("finance/invoices.md", 0),
-        ("it/laptops.md", 0),
-        ("icelandic/orlof.md", 0),
+    for path in [
+        "policies/animals.md",
+        "policies/holidays.md",
+        "finance/invoices.md",
+        "it/laptops.md",
+        "icelandic/orlof.md",
     ] {
         let dest = corpus.path().join(path);
         fs::create_dir_all(dest.parent().unwrap()).unwrap();
@@ -446,23 +422,18 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
         r#"
 - id: dog
   question: Can I bring my dog to work?
-  terms: dog OR dogs
   expect: [policies/animals.md]
 - id: laptop-age
   question: How often do computers get swapped out?
-  terms: computers OR swapped
   expect: [it/laptops.md]
 - id: invoice
   question: Who paid INV-2024-0042?
-  terms: '"INV-2024-0042"'
   expect: [finance/invoices.md]
 - id: leave
   question: How many vacation days do employees get?
-  terms: vacation OR employees
   expect: [policies/holidays.md]
 - id: rollback
-  question: What do I type to undo a bad release?
-  terms: ROLLBACK-77
+  question: What do I type to undo a bad release ROLLBACK-77?
   expect: ["project:docs/deploy.md"]
 "#,
     )
@@ -491,14 +462,21 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
     );
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(text.contains("2 sources"), "{text}");
-    for needle in ["recall@5", "MRR", "p50", "chunks/s", "hybrid", "terms"] {
+    for needle in [
+        "recall@5",
+        "MRR",
+        "p50",
+        "chunks/s",
+        "hybrid",
+        "full-text",
+        "meaning",
+    ] {
         assert!(text.contains(needle), "eval output lacks {needle}:\n{text}");
     }
     let json: Value = serde_json::from_str(&fs::read_to_string(&baseline).unwrap()).unwrap();
-    assert!(
-        json["hybrid"]["recall_at_5"].as_f64().unwrap()
-            > json["terms"]["recall_at_5"].as_f64().unwrap()
-    );
+    let recall = |mode: &str| json[mode]["recall_at_5"].as_f64().unwrap();
+    assert!(recall("hybrid") >= recall("full_text"));
+    assert!(recall("hybrid") >= recall("meaning"));
     // Against its own baseline it passes; against a better one it fails.
     assert!(eval(&[]).status.success());
     let mut better = json.clone();
@@ -513,8 +491,7 @@ fn eval_prints_the_metrics_and_fails_on_a_regression() {
 }
 
 /// The flow as a person runs it: inside a project, no flags. The project's docs are read in place,
-/// a source its AGENTS.md lists is read beside them, and `init` creates the layout only where
-/// `update: true` says.
+/// and a source its AGENTS.md lists is read beside them; nothing is written into either.
 #[test]
 fn inside_a_project_with_no_flags_the_docs_and_the_listed_sources_are_searched() {
     let dir = TempDir::new().unwrap();
@@ -563,11 +540,8 @@ fn inside_a_project_with_no_flags_the_docs_and_the_listed_sources_are_searched()
         snapshot(&at("brain")),
         snapshot(&repo),
     );
-    run(&["index"]);
-    let hit = |args: &[&str]| -> Vec<(String, String)> {
-        let mut full = vec!["search", "--json"];
-        full.extend_from_slice(args);
-        serde_json::from_str::<Value>(&run(&full))
+    let hit = |question: &str| -> Vec<(String, String)> {
+        serde_json::from_str::<Value>(&run(&["search", question, "--json"]))
             .unwrap()
             .as_array()
             .unwrap()
@@ -581,12 +555,12 @@ fn inside_a_project_with_no_flags_the_docs_and_the_listed_sources_are_searched()
             .collect()
     };
     assert_eq!(
-        hit(&["--about", "when does a paused invoice resume"])[0].1,
+        hit("when does a paused invoice resume")[0].1,
         "docs/PRODUCT.md"
     );
-    assert!(hit(&["--about", "can I bring my dog to work"])
+    assert!(hit("can I bring my dog to work")
         .contains(&("../policies".to_string(), "animals.md".to_string())));
-    assert!(hit(&["--terms", "plant"])
+    assert!(hit("what day is the plant rota")
         .contains(&("../brain".to_string(), "old-decision.md".to_string())));
     assert_eq!(
         sources_before,
@@ -597,18 +571,19 @@ fn inside_a_project_with_no_flags_the_docs_and_the_listed_sources_are_searched()
         ),
         "reading writes nothing"
     );
-    assert!(run(&["stats"]).contains("agents write here"));
-    run(&["init"]);
-    assert!(at("brain/BRAIN.md").is_file() && at("brain/decisions").is_dir());
-    assert!(!at("policies/BRAIN.md").exists() && !at("repo/decisions").exists());
+    let stats = run(&["stats"]);
+    assert!(
+        stats.contains("../brain") && !stats.contains("agents write"),
+        "{stats}"
+    );
+    assert!(!at("brain/BRAIN.md").exists() && !at("repo/decisions").exists());
 }
 
-/// What is decided stays found, with its status: inside a project, a decision superseded in the
-/// `update: true` source and an ADR superseded or amended in the project's docs are searched
-/// where they are. The old ones come back only with `--all`, pointing to what replaced them, and
-/// nothing is written to the project.
+/// What is decided stays found, with its status: inside a project, an ADR that a later one
+/// superseded comes after the current one, marked with what replaced it; an amended one brings
+/// its amendments; and nothing is written to the project.
 #[test]
-fn a_superseded_decision_never_comes_back_as_current_and_an_amended_adr_brings_its_amendments() {
+fn a_superseded_adr_comes_after_what_replaced_it_and_an_amended_adr_brings_its_amendments() {
     let dir = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();
     let write = |p: &str, t: &str| {
@@ -616,10 +591,7 @@ fn a_superseded_decision_never_comes_back_as_current_and_an_amended_adr_brings_i
         fs::create_dir_all(full.parent().unwrap()).unwrap();
         fs::write(full, t).unwrap();
     };
-    write(
-        "repo/AGENTS.md",
-        "# AGENTS.md\n\n## Supercharge\n\n```yaml\ndocs: docs\nbrain:\n  - path: ../brain\n    update: true\n```\n",
-    );
+    write("repo/AGENTS.md", "# AGENTS.md\n\nA service.\n");
     write(
         "repo/docs/BUSINESS.md",
         "# Business\n\nSelkie is sold to bookkeepers, who are the paying customer.\n",
@@ -634,497 +606,56 @@ fn a_superseded_decision_never_comes_back_as_current_and_an_amended_adr_brings_i
         "repo/docs/adr/0004-nok.md",
         "# 0004: NOK too\n\nStatus: accepted\n\nNorwegian krone amounts are stored as well.\n",
     );
-    write(
-        "brain/decisions/2023-11-02-single-phone.md",
-        "---\ntitle: One phone number\ndate: 2023-11-02\nkind: product\nstatus: superseded\nsuperseded-by: 2026-01-10-sms-fallback\n---\nSignup asks for one phone number.\n",
-    );
-    write(
-        "brain/decisions/2026-01-10-sms-fallback.md",
-        "---\ntitle: A second phone number\ndate: 2026-01-10\nkind: product\nstatus: accepted\nsupersedes: [2023-11-02-single-phone]\n---\nSignup asks for a second phone number, an SMS fallback.\n",
-    );
     let repo = dir.path().join("repo");
-    let run = |args: &[&str]| -> Vec<Value> {
+    let search = |args: &[&str]| -> Vec<Value> {
+        let mut full = vec!["search"];
+        full.extend_from_slice(args);
+        full.push("--json");
         let out = Command::new(env!("CARGO_BIN_EXE_brain"))
             .current_dir(&repo)
             .env_clear()
             .env("SUPERCHARGE_CACHE_DIR", cache.path())
-            .args(args)
+            .args(&full)
             .output()
             .unwrap();
         assert!(
             out.status.success(),
-            "{args:?}: {}",
+            "{full:?}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        let text = String::from_utf8_lossy(&out.stdout);
-        serde_json::from_str::<Value>(&text)
-            .unwrap_or(Value::Null)
+        serde_json::from_slice::<Value>(&out.stdout)
+            .unwrap()
             .as_array()
             .cloned()
-            .unwrap_or_default()
+            .unwrap()
     };
-    let before = snapshot(&repo);
-    run(&["index"]);
     let paths = |hits: &[Value]| -> Vec<String> {
         hits.iter()
             .map(|h| h["path"].as_str().unwrap().to_string())
             .collect()
     };
-    let search = |extra: &[&str]| {
-        let mut args = vec!["search", "--json", "-k", "10"];
-        args.extend_from_slice(extra);
-        run(&args)
-    };
+    let before = snapshot(&repo);
 
-    let phone = paths(&search(&["--terms", "phone number"]));
-    assert_eq!(phone, ["decisions/2026-01-10-sms-fallback.md"]);
-    let all = search(&["--terms", "phone number", "--all"]);
-    let old = all
-        .iter()
-        .find(|h| h["path"] == "decisions/2023-11-02-single-phone.md")
-        .unwrap();
-    assert_eq!(old["status"], "superseded");
-    assert_eq!(old["superseded_by"], "decisions/2026-01-10-sms-fallback.md");
-    assert_eq!(old["kind"], "product");
-
-    let batch = paths(&search(&["--terms", "invoices batched"]));
+    let hits = search(&["How often are invoices batched?", "-k", "10"]);
+    let found = paths(&hits);
+    let at = |p: &str| found.iter().position(|f| f == p).unwrap();
     assert!(
-        batch.contains(&"docs/adr/0003-daily.md".to_string()),
-        "{batch:?}"
+        at("docs/adr/0003-daily.md") < at("docs/adr/0001-weekly.md"),
+        "{found:?}"
     );
-    assert!(
-        !batch.contains(&"docs/adr/0001-weekly.md".to_string()),
-        "{batch:?}"
-    );
-    let adr = search(&["--terms", "invoices batched", "--all"]);
-    let weekly = adr
-        .iter()
-        .find(|h| h["path"] == "docs/adr/0001-weekly.md")
-        .unwrap();
+    let weekly = &hits[at("docs/adr/0001-weekly.md")];
+    assert_eq!(weekly["status"], "superseded");
     assert_eq!(weekly["superseded_by"], "docs/adr/0003-daily.md");
+    assert_eq!(hits[at("docs/adr/0003-daily.md")]["status"], "accepted");
 
-    let amended = run(&["search", "--json", "--terms", "ISK EUR", "-k", "1"]);
+    let amended = search(&["Amounts are stored in ISK and EUR", "-k", "1"]);
     assert_eq!(
         paths(&amended),
         ["docs/adr/0002-currency.md", "docs/adr/0004-nok.md"]
     );
     assert_eq!(
-        paths(&search(&["--terms", "bookkeepers"]))[0],
+        paths(&search(&["Who pays for Selkie? The bookkeepers?"]))[0],
         "docs/BUSINESS.md"
     );
-    assert_eq!(
-        paths(&search(&[
-            "--terms",
-            "phone number",
-            "--kind",
-            "product",
-            "--since",
-            "2025-01-01"
-        ])),
-        phone
-    );
     assert_eq!(before, snapshot(&repo), "nothing in the project is written");
-}
-
-fn sha256(text: &str) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(text.as_bytes()))
-}
-
-/// A note as an agent writes it: frontmatter with the sources it was made from, and a body.
-fn note(title: &str, questions: &[&str], sources: &[(&str, &str)], verified: &str) -> String {
-    let mut text = format!(
-        "---\ntitle: {title}\nsummary: {title}, in one line\naliases: [trip rules]\nquestions:\n"
-    );
-    for q in questions {
-        text += &format!("  - {q}\n");
-    }
-    text += "sources:\n";
-    for (path, content) in sources {
-        text += &format!("  - path: {path}\n    hash: {}\n", sha256(content));
-    }
-    text += &format!("verified: {verified}\n---\n\n");
-    text += "Trips need approval ten days ahead, and meals abroad are a flat EUR 45 a day.\n";
-    text
-}
-
-/// Notes stay true: a note whose sources changed or went is flagged `stale` in hits and listed
-/// by `stats`, and ranks below the raw files; a refreshed note is fresh again and ranks first; a
-/// note whose only source is gone is reported; two notes from the same sources are reported as
-/// duplicates. Nothing in a source is written.
-#[test]
-fn a_note_is_stale_when_its_sources_change_and_fresh_again_once_refreshed() {
-    let dir = TempDir::new().unwrap();
-    let cache = TempDir::new().unwrap();
-    let write = |p: &str, t: &str| {
-        let full = dir.path().join(p);
-        fs::create_dir_all(full.parent().unwrap()).unwrap();
-        fs::write(full, t).unwrap();
-    };
-    write(
-        "repo/AGENTS.md",
-        "# AGENTS.md\n\n## Supercharge\n\n```yaml\ndocs: docs\nbrain:\n  - path: ../policies\n  - path: ../brain\n    update: true\n```\n",
-    );
-    let product = "# Product\n\nA paused invoice stays paused until someone resumes it.\n";
-    write("repo/docs/PRODUCT.md", product);
-    let travel =
-        "# Trips\n\nEvery business trip needs written approval ten days before departure.\n";
-    let meals = "# Meals\n\nOn trips abroad meals are reimbursed at a flat EUR 45 per day.\n";
-    write("policies/travel.md", travel);
-    write("policies/meals.md", meals);
-    write(
-        "policies/old-rule.md",
-        "# Old rule\n\nParking is free on Fridays.\n",
-    );
-    let trip_note = |verified: &str, travel: &str| {
-        note(
-            "Business trip approval and meals",
-            &["How early must a trip be approved and what can I claim for meals?"],
-            &[
-                ("../policies:travel.md", travel),
-                ("../policies:meals.md", meals),
-            ],
-            verified,
-        )
-    };
-    write("brain/notes/trip.md", &trip_note("2025-03-01", travel));
-    // The same two sources again: two notes about the same thing.
-    write(
-        "brain/notes/trip-again.md",
-        &note(
-            "Trips, once more",
-            &["Rules for business trips?"],
-            &[
-                ("../policies:meals.md", meals),
-                ("../policies:travel.md", travel),
-            ],
-            "2025-03-02",
-        ),
-    );
-    // A note on a project file, and one whose only source is deleted below.
-    write(
-        "brain/notes/paused.md",
-        &note(
-            "Paused invoices",
-            &["What happens to a paused invoice?"],
-            &[("project:docs/PRODUCT.md", product)],
-            "2025-03-03",
-        ),
-    );
-    write(
-        "brain/notes/parking.md",
-        &note(
-            "Parking on Fridays",
-            &["Is parking free on Fridays?"],
-            &[(
-                "../policies:old-rule.md",
-                "# Old rule\n\nParking is free on Fridays.\n",
-            )],
-            "2025-03-04",
-        ),
-    );
-    let repo = dir.path().join("repo");
-    let run = |args: &[&str]| -> Value {
-        let out = Command::new(env!("CARGO_BIN_EXE_brain"))
-            .current_dir(&repo)
-            .env_clear()
-            .env("SUPERCHARGE_CACHE_DIR", cache.path())
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        serde_json::from_slice(&out.stdout).unwrap_or(Value::Null)
-    };
-    let ask =
-        || -> Vec<Value> {
-            run(&[
-            "search", "--json", "-k", "10", "--about",
-            "How early must a business trip be approved, and what can I claim for meals abroad?",
-        ])
-        .as_array()
-        .unwrap()
-        .clone()
-        };
-    let notes_of = |stats: &Value| -> Value {
-        stats["sources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|s| s["source"] == "../brain")
-            .unwrap()["notes"]
-            .clone()
-    };
-    let names = |v: &Value| -> Vec<String> {
-        let mut out: Vec<String> = v
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|n| {
-                n["path"]
-                    .as_str()
-                    .unwrap_or_else(|| n.as_str().unwrap())
-                    .to_string()
-            })
-            .collect();
-        out.sort();
-        out
-    };
-
-    // Fresh: the note answers the question, is not stale and ranks first.
-    let indexed = run(&["index", "--json"]);
-    assert_eq!(indexed["notes"]["stale"], 0, "{indexed}");
-    assert_eq!(indexed["notes"]["total"], 4);
-    let hits = ask();
-    assert_eq!(hits[0]["path"], "notes/trip.md", "{hits:?}");
-    assert_eq!(hits[0]["kind"], "note");
-    assert_eq!(hits[0]["stale"], false);
-    assert_eq!(
-        hits[0]["date"], "2025-03-01",
-        "a note is dated by when it was verified"
-    );
-    assert_eq!(
-        hits[0]["hash"].as_str().unwrap().len(),
-        64,
-        "hits give the hash a note cites"
-    );
-
-    // A source is gone: its note is listed as pointing at nothing, and is stale.
-    fs::remove_file(dir.path().join("policies/old-rule.md")).unwrap();
-    let indexed = run(&["index", "--json"]);
-    assert_eq!(indexed["notes"]["stale"], 1);
-    let notes = notes_of(&run(&["stats", "--json"]));
-    assert_eq!(names(&notes["orphans"]), ["notes/parking.md"], "{notes}");
-    assert!(names(&notes["stale"]).contains(&"notes/parking.md".to_string()));
-    // Two notes from the same sources are reported once as duplicates.
-    assert_eq!(notes["duplicates"].as_array().unwrap().len(), 1, "{notes}");
-    assert_eq!(notes["total"], 4);
-
-    // A raw source changes: the notes built from it are stale, flagged in hits, listed by stats
-    // with what changed, and rank below the raw files.
-    let changed =
-        "# Trips\n\nEvery business trip needs written approval fourteen days before departure.\n";
-    write("policies/travel.md", changed);
-    let indexed = run(&["index", "--json"]);
-    assert_eq!(indexed["notes"]["stale"], 3);
-    let hits = ask();
-    let at = |p: &str| {
-        hits.iter()
-            .position(|h| h["path"] == p)
-            .unwrap_or(usize::MAX)
-    };
-    assert_eq!(hits[at("notes/trip.md")]["stale"], true, "{hits:?}");
-    assert!(
-        at("notes/trip.md") > at("travel.md") && at("notes/trip.md") > at("meals.md"),
-        "a stale note ranks below the raw files: {hits:?}"
-    );
-    let stale = notes_of(&run(&["stats", "--json"]))["stale"].clone();
-    assert_eq!(
-        names(&stale),
-        ["notes/parking.md", "notes/trip-again.md", "notes/trip.md"]
-    );
-    let trip = stale
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["path"] == "notes/trip.md")
-        .unwrap();
-    let states: Vec<(&str, &str)> = trip["sources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| (s["path"].as_str().unwrap(), s["state"].as_str().unwrap()))
-        .collect();
-    assert_eq!(
-        states,
-        [
-            ("../policies:travel.md", "changed"),
-            ("../policies:meals.md", "fresh")
-        ]
-    );
-    assert_eq!(trip["sources"][0]["current"], sha256(changed));
-    // The note on the project's file is untouched by it.
-    assert!(!names(&stale).contains(&"notes/paused.md".to_string()));
-    // Text output says so too.
-    let out = Command::new(env!("CARGO_BIN_EXE_brain"))
-        .current_dir(&repo)
-        .env_clear()
-        .env("SUPERCHARGE_CACHE_DIR", cache.path())
-        .arg("stats")
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        text.contains("stale notes (3)") && text.contains("notes/trip.md"),
-        "{text}"
-    );
-    // So does the text a search prints, which is what the skill's search subagent reads.
-    let out = Command::new(env!("CARGO_BIN_EXE_brain"))
-        .current_dir(&repo)
-        .env_clear()
-        .env("SUPERCHARGE_CACHE_DIR", cache.path())
-        .args([
-            "search",
-            "--about",
-            "business trip approval and meals abroad",
-            "-k",
-            "8",
-        ])
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    let trip = text
-        .lines()
-        .find(|l| l.contains("notes/trip.md"))
-        .unwrap_or("");
-    assert!(trip.contains("STALE note"), "{text}");
-    assert!(
-        text.lines()
-            .filter(|l| l.contains("travel.md") || l.contains("meals.md"))
-            .all(|l| !l.contains("STALE")),
-        "{text}"
-    );
-
-    // The project's own docs change too.
-    write(
-        "repo/docs/PRODUCT.md",
-        "# Product\n\nA paused invoice resumes after 7 days.\n",
-    );
-    run(&["index", "--json"]);
-    let stale = notes_of(&run(&["stats", "--json"]))["stale"].clone();
-    assert!(
-        names(&stale).contains(&"notes/paused.md".to_string()),
-        "{stale}"
-    );
-
-    // Refreshed: new hash, today's `verified`; fresh again, ranked first again.
-    write("brain/notes/trip.md", &trip_note("2025-04-01", changed));
-    run(&["index", "--json"]);
-    let hits = ask();
-    assert_eq!(hits[0]["path"], "notes/trip.md", "{hits:?}");
-    assert_eq!(hits[0]["stale"], false);
-    assert_eq!(hits[0]["date"], "2025-04-01");
-    assert!(!names(&notes_of(&run(&["stats", "--json"]))["stale"])
-        .contains(&"notes/trip.md".to_string()));
-    // Notes of two projects that both cite `project:docs/PRODUCT.md` cite different files: they
-    // are not duplicates of each other, and neither is judged from this project.
-    for name in ["a", "b"] {
-        write(
-            &format!("brain/notes/product-{name}.md"),
-            &format!(
-                "---\ntitle: Product of {name}\nproject: {name}\nsummary: s\nquestions:\n  - q\nsources:\n  - path: project:docs/PRODUCT.md\n    hash: {}\nverified: 2025-04-02\n---\n\nSomething about project {name}.\n",
-                sha256("x")
-            ),
-        );
-    }
-    run(&["index", "--json"]);
-    let notes = notes_of(&run(&["stats", "--json"]));
-    assert_eq!(notes["total"], 6);
-    assert_eq!(notes["duplicates"].as_array().unwrap().len(), 1, "{notes}");
-    assert!(!names(&notes["stale"])
-        .iter()
-        .any(|p| p.contains("product-")));
-    // Reading and indexing wrote nothing: the sources hold what this test put there.
-    let listing = |d: &str| -> Vec<String> {
-        let mut v: Vec<String> = fs::read_dir(dir.path().join(d))
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        v.sort();
-        v
-    };
-    assert_eq!(listing("brain"), ["notes"]);
-    assert_eq!(listing("policies"), ["meals.md", "travel.md"]);
-    assert_eq!(listing("repo"), ["AGENTS.md", "docs"]);
-}
-
-/// A fresh note that answers the question is a right answer, as well as the raw files it
-/// summarises: a question's `accept` names it, and it counts like an `expect` file. It must exist
-/// and be fresh, or the question would test a trap.
-#[test]
-fn a_question_accepts_a_fresh_note_as_well_as_the_raw_files() {
-    let raw = "# Axolotls\n\nThe axolotl tank is cleaned every Tuesday by the facilities team.\n";
-    let corpus = TempDir::new().unwrap();
-    let write = |p: &str, t: &str| {
-        let full = corpus.path().join(p);
-        fs::create_dir_all(full.parent().unwrap()).unwrap();
-        fs::write(full, t).unwrap();
-    };
-    write("facilities/axolotls.md", raw);
-    write(
-        "notes/axolotls.md",
-        &note(
-            "Axolotl tank care",
-            &["When is the axolotl tank cleaned?"],
-            &[("facilities/axolotls.md", raw)],
-            "2025-02-10",
-        ),
-    );
-    let project = TempDir::new().unwrap();
-    fs::write(project.path().join("README.md"), "# P\n\nA service.\n").unwrap();
-    let questions = TempDir::new().unwrap();
-    let cache = TempDir::new().unwrap();
-    let eval = |yaml: &str| {
-        fs::write(questions.path().join("q.yaml"), yaml).unwrap();
-        let baseline = cache.path().join("baseline.json");
-        let out = run(
-            env!("CARGO_BIN_EXE_brain"),
-            project.path(),
-            corpus.path(),
-            cache.path(),
-            &[
-                "eval",
-                "--corpus",
-                corpus.path().to_str().unwrap(),
-                "--project",
-                project.path().to_str().unwrap(),
-                "--questions",
-                questions.path().to_str().unwrap(),
-                "--baseline",
-                baseline.to_str().unwrap(),
-                "--update-baseline",
-                "--json",
-            ],
-        );
-        (out.status.success(), out)
-    };
-    let question = |extra: &str| {
-        format!(
-            "- id: axolotl\n  question: When is the axolotl tank cleaned?\n  terms: axolotl\n  expect: [facilities/axolotls.md]\n{extra}"
-        )
-    };
-    // The note ranks first, so with only the raw file expected the answer is second.
-    let (ok, out) = eval(&question(""));
-    assert!(ok, "{}", String::from_utf8_lossy(&out.stderr));
-    let before: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(before["terms"]["mrr"], 0.5, "{before}");
-    // Accepting the note makes it a right answer: first.
-    let (ok, out) = eval(&question("  accept: [notes/axolotls.md]\n"));
-    assert!(ok, "{}", String::from_utf8_lossy(&out.stderr));
-    let after: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(after["terms"]["mrr"], 1.0, "{after}");
-    assert_eq!(after["hybrid"]["recall_at_5"], 1.0, "{after}");
-    // A file that is not there is an error.
-    let (ok, out) = eval(&question("  accept: [notes/missing.md]\n"));
-    assert!(!ok);
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("notes/missing.md"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    // A stale note is not a right answer.
-    write(
-        "facilities/axolotls.md",
-        "# Axolotls\n\nCleaned on Thursdays now.\n",
-    );
-    let (ok, out) = eval(&question("  accept: [notes/axolotls.md]\n"));
-    assert!(!ok);
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("stale"),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }

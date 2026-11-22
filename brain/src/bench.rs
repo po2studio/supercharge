@@ -5,11 +5,11 @@
 //! documents instead, for timing a first index at the size of a company's folder.
 
 use crate::{
-    doc::Meta,
+    adr::Status,
     embed::{self, Embedder},
     eval::p50,
     index,
-    search::{self, Opened, Query},
+    search::{self, Mode, Opened, Query},
     sources::Source,
     store::{self, NewChunk, NewFile, Store},
 };
@@ -32,8 +32,6 @@ const VOCABULARY: usize = 50_000;
 const CHUNK_WORDS: usize = 200;
 /// Words in a sample document: one chunk of real-looking text, so the model sees what it sees.
 const SAMPLE_WORDS: usize = 230;
-/// Searches of the command line, each its own process that loads the model.
-const CLI_RUNS: usize = 7;
 
 #[rustfmt::skip]
 const COMMON: &[&str] = &[
@@ -110,15 +108,12 @@ pub struct Results {
     /// The real model and the whole pipeline, on `index_sample_chunks` chunks of real-looking text.
     pub index_chunks_per_s: f64,
     pub index_sample_chunks: usize,
-    /// In one process, after a first query: full-text and meaning together, then each alone.
+    /// In one process, after a first query: both halves together, then each alone.
     pub search_p50_ms: f64,
-    pub search_terms_p50_ms: f64,
-    pub search_about_p50_ms: f64,
-    /// Of `search_about_p50_ms`, what embedding the question takes: the rest is the vector scan.
+    pub search_full_text_p50_ms: f64,
+    pub search_meaning_p50_ms: f64,
+    /// Of `search_meaning_p50_ms`, what embedding the question takes: the rest is the vector scan.
     pub query_embed_p50_ms: f64,
-    /// `brain search --terms --about` as a person runs it: a new process each time, the model
-    /// loaded and the index opened cold. Absent when the bench runs inside a test of a library.
-    pub cli_search_p50_ms: Option<f64>,
     pub threads: usize,
 }
 
@@ -199,7 +194,7 @@ pub fn run(opts: &Opts, embedder: &mut dyn Embedder) -> Result<Results> {
             date: "2026-01-01".into(),
             own_date: None,
             kind: "raw".into(),
-            meta: Meta::default(),
+            meta: Status::default(),
             simhash: None,
             chunks,
         });
@@ -212,63 +207,52 @@ pub fn run(opts: &Opts, embedder: &mut dyn Embedder) -> Result<Results> {
     let fill_seconds = started.elapsed().as_secs_f64();
     let index_bytes = fs::metadata(&index_path)?.len();
 
-    // Searches over it, in this process.
-    let mut queries: Vec<(String, String)> = Vec::new();
+    // Searches over it, in this process: a question of common words and two rare ones.
+    let mut queries: Vec<String> = Vec::new();
     for _ in 0..opts.queries.max(1) {
-        let terms = format!(
-            "{} {}",
+        queries.push(format!(
+            "{} {} {}",
+            text(&mut rng, 9, 400),
             word(30 + rng.zipf(VOCABULARY - 30)),
             word(30 + rng.zipf(VOCABULARY - 30))
-        );
-        queries.push((terms, text(&mut rng, 9, 400)));
+        ));
     }
     let opened = vec![Opened::new(&source, store)];
-    let time = |embedder: &mut dyn Embedder,
-                pick: &dyn Fn(&(String, String)) -> Query<'_>|
-     -> Result<f64> {
+    let time = |embedder: &mut dyn Embedder, mode: Mode| -> Result<f64> {
         let mut ms = Vec::new();
         for q in &queries {
             let t = Instant::now();
-            search::search(&opened, embedder, &pick(q), opts.exact_limit)?;
+            let query = Query {
+                question: q,
+                k: 10,
+                mode,
+            };
+            search::search(&opened, embedder, &query, opts.exact_limit)?;
             ms.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         Ok(p50(ms))
     };
     // The first query pays for pages not yet read; a person's second search pays for it too, so
-    // it is left out only here, and the command line below counts it.
+    // it is left out here.
     search::search(
         &opened,
         embedder,
         &Query {
-            terms: Some("the"),
-            about: Some("the"),
+            question: "the",
             k: 10,
+            mode: Mode::Both,
         },
         opts.exact_limit,
     )?;
-    let hybrid = time(embedder, &|q| Query {
-        terms: Some(&q.0),
-        about: Some(&q.1),
-        k: 10,
-    })?;
-    let terms = time(embedder, &|q| Query {
-        terms: Some(&q.0),
-        about: None,
-        k: 10,
-    })?;
-    let about = time(embedder, &|q| Query {
-        terms: None,
-        about: Some(&q.1),
-        k: 10,
-    })?;
+    let both = time(embedder, Mode::Both)?;
+    let full_text = time(embedder, Mode::FullText)?;
+    let meaning = time(embedder, Mode::Meaning)?;
     let mut embed_ms = Vec::new();
     for q in &queries {
         let t = Instant::now();
-        embedder.embed_query(&q.1)?;
+        embedder.embed_query(q)?;
         embed_ms.push(t.elapsed().as_secs_f64() * 1000.0);
     }
-    drop(opened);
-    let cli = cli_p50(&root, &queries)?;
 
     let (sample_chunks, per_s) = indexing_speed(&work, opts.embed_sample, embedder)?;
     Ok(Results {
@@ -278,43 +262,12 @@ pub fn run(opts: &Opts, embedder: &mut dyn Embedder) -> Result<Results> {
         index_bytes,
         index_chunks_per_s: per_s,
         index_sample_chunks: sample_chunks,
-        search_p50_ms: hybrid,
-        search_terms_p50_ms: terms,
-        search_about_p50_ms: about,
+        search_p50_ms: both,
+        search_full_text_p50_ms: full_text,
+        search_meaning_p50_ms: meaning,
         query_embed_p50_ms: p50(embed_ms),
-        cli_search_p50_ms: cli,
         threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
     })
-}
-
-/// `brain search` as a person runs it, a fresh process per search, over the stored index.
-fn cli_p50(root: &Path, queries: &[(String, String)]) -> Result<Option<f64>> {
-    let Ok(exe) = std::env::current_exe() else {
-        return Ok(None);
-    };
-    let cache = fs::canonicalize(store::cache_dir()?)?;
-    let mut ms = Vec::new();
-    for (terms, about) in queries.iter().cycle().take(CLI_RUNS) {
-        let t = Instant::now();
-        let out = Command::new(&exe)
-            // Not a folder of a project, wherever `--dir` is: a project around it would be
-            // searched too.
-            .current_dir("/")
-            .env("SUPERCHARGE_CACHE_DIR", &cache)
-            .arg("--source")
-            .arg(root)
-            .args(["search", "--terms", terms, "--about", about, "--json"])
-            .output()
-            .context("cannot run brain search")?;
-        ms.push(t.elapsed().as_secs_f64() * 1000.0);
-        if !out.status.success() {
-            bail!(
-                "brain search failed on the bench index: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-    }
-    Ok(Some(p50(ms)))
 }
 
 /// Writes `chunks` worth of real-looking documents, indexes them with the model as `index` does,

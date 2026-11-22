@@ -1,84 +1,23 @@
 # Written into the brain repo as .github/workflows/brain.yml by the `brain` skill (supercharge),
-# with the pinned release's tag, repo, asset and sha256 filled in from the skill's brain.json. It
-# checks the brain on every push and pull request, and on the default branch keeps one open issue
-# while notes are stale. In CI the check sees only this repo's files: a note made from a file of
-# another source is judged by the ship step and `/brain refresh`. On the default branch it also
-# builds the index of this repo's own files and publishes it as an asset of the release
-# `brain-index`, so a machine pulls it instead of embedding the whole brain; it never holds a
-# project's docs.
+# with the pinned release's tag, repo, asset and sha256 filled in from the skill's brain.json. On
+# the default branch it builds the index of this repo's own files and publishes it as an asset of
+# the release `brain-index`, so a machine pulls it instead of embedding the whole brain; it never
+# holds a project's docs.
 name: brain
 
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    # One at a time, so two pushes can't each open the stale-notes issue.
-    concurrency:
-      group: brain
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # `brain check` reads history to see that no accepted decision was edited.
-          fetch-depth: 0
-      - name: Download the pinned brain binary
-        run: |
-          mkdir -p "$RUNNER_TEMP/bin"
-          gh release download @TAG@ --repo @REPO@ --pattern @ASSET@ --dir "$RUNNER_TEMP/bin"
-          cd "$RUNNER_TEMP/bin"
-          echo "@SHA256@  @ASSET@" | sha256sum -c -
-          mv @ASSET@ brain
-          chmod +x brain
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: List the stale notes
-        run: brain check --json > "$RUNNER_TEMP/check.json" || true
-      - name: Keep one issue open while notes are stale
-        if: always() && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
-        run: |
-          # A check that could not run says so in the last step; there is nothing to list.
-          jq -e . "$RUNNER_TEMP/check.json" > /dev/null || exit 0
-          stale=$(jq '.stale | length' "$RUNNER_TEMP/check.json")
-          open=$(gh issue list --state open --label brain-stale --json number --jq '.[].number')
-          keep=$(echo "$open" | head -n 1)
-          # Never more than one: close any other.
-          for n in $(echo "$open" | tail -n +2); do gh issue close "$n" --comment "Duplicate of #$keep."; done
-          if [ "$stale" -gt 0 ]; then
-            {
-              echo "These notes were made from files that changed or are gone:"
-              echo
-              jq -r '.stale[] | "- `\(.path)`: " + (if (.sources | length) == 0 then "it cites no source" else ([.sources[] | select(.state != "fresh") | "\(.path) \(.state)"] | join(", ")) end)' "$RUNNER_TEMP/check.json"
-              echo
-              echo "To refresh them, run \`/brain refresh\` in a project that lists this brain with \`update: true\`. This issue closes itself once no note is stale."
-            } > "$RUNNER_TEMP/body.md"
-            title="Stale notes: $stale"
-            if [ -n "$keep" ]; then
-              gh issue edit "$keep" --title "$title" --body-file "$RUNNER_TEMP/body.md"
-            else
-              gh label create brain-stale --description "Notes made from files that changed" --color FBCA04 || true
-              gh issue create --title "$title" --label brain-stale --body-file "$RUNNER_TEMP/body.md"
-            fi
-          elif [ -n "$keep" ]; then
-            gh issue close "$keep" --comment "No note is stale any more."
-          fi
-      - name: Check the brain
-        if: always()
-        run: brain check
-
   index:
     # The index is built from the one published last, so a push embeds only what changed. A first
     # build of a big brain may not fit a job: it stops at the budget, publishes what it has, and
     # starts the workflow again to carry on.
-    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 355
     permissions:

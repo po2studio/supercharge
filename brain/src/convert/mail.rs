@@ -141,7 +141,6 @@ pub fn eml(bytes: &[u8]) -> Result<Converted, String> {
         title: r.subject,
         date: r.date,
         prose: true,
-        meta: Default::default(),
     })
 }
 
@@ -172,7 +171,6 @@ pub fn mbox(bytes: &[u8]) -> Result<Converted, String> {
         title: None,
         date,
         prose: true,
-        meta: Default::default(),
     })
 }
 

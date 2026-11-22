@@ -1,22 +1,19 @@
+mod adr;
 mod bench;
-mod check;
 mod chunk;
 mod convert;
-mod decisions;
 mod dedup;
 mod doc;
 mod embed;
 mod eval;
 mod index;
-mod init;
-mod notes;
 mod search;
 mod shared;
 mod sources;
 mod store;
 mod vecs;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use embed::Embedder;
 use search::Opened;
@@ -28,16 +25,17 @@ use store::Store;
 #[derive(Parser)]
 #[command(
     version,
-    about = "Index and search a project's docs and the folders it lists as sources, on the CPU, offline",
-    long_about = "Run inside a project: the project's docs folder (the `docs` key in AGENTS.md), README.md and AGENTS.md \
-are read in place, and so is each folder in the `brain:` list of AGENTS.md's `## Supercharge` block. \
-Indexes live under ~/.cache/supercharge/; nothing is written into a project or a source, except by `brain init`."
+    about = "Search a project's docs and the folders it lists as sources, on the CPU, offline: brain search \"<question>\"",
+    long_about = "Run inside a project: brain search \"<question>\" brings the index up to date, then returns the best \
+matches for the question as asked. It reads the project's docs folder (the `docs` key in AGENTS.md), \
+README.md and AGENTS.md, and each folder in the `brain:` list of AGENTS.md's `## Supercharge` block. \
+Indexes live under ~/.cache/supercharge/; nothing is written into a project or a source."
 )]
 struct Cli {
     /// The project's folder; by default the git repo (or the folder with an AGENTS.md) containing the current directory.
     #[arg(long, global = true)]
     repo: Option<PathBuf>,
-    /// A folder to read as a source, read-only; repeat for several. Replaces the `brain:` list.
+    /// A folder to read as a source; repeat for several. Replaces the `brain:` list.
     #[arg(long, global = true)]
     source: Vec<PathBuf>,
     #[command(subcommand)]
@@ -46,58 +44,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Ask a question in plain words: the index is brought up to date first, then the best matches
+    /// by words and by meaning come back, one per file.
+    Search {
+        /// The question, as you would ask a colleague.
+        #[arg(required = true, num_args = 1.., value_name = "QUESTION")]
+        question: Vec<String>,
+        /// How many files to return.
+        #[arg(short, default_value_t = 5)]
+        k: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Bring the index of each source up to date: embed only the files whose content changed.
     Index {
         #[arg(long)]
         json: bool,
     },
-    /// Search the project and its sources. Give --terms (full-text, FTS5 syntax), --about (a plain-language description), or both.
-    Search {
-        /// Full-text query: words are ANDed; use OR between alternatives, "quotes" for phrases.
-        #[arg(long)]
-        terms: Option<String>,
-        /// What the answer is about, in plain language; matched by meaning.
-        #[arg(long)]
-        about: Option<String>,
-        #[arg(short, default_value_t = 5)]
-        k: usize,
-        /// Only this kind of entry: decision (any kind of decision, ADRs included), business, product, process, adr, note or raw.
-        #[arg(long)]
-        kind: Option<String>,
-        /// Only decisions of this project (a project's own docs count as its own).
-        #[arg(long)]
-        project: Option<String>,
-        /// Only entries dated YYYY-MM-DD or later.
-        #[arg(long)]
-        since: Option<String>,
-        /// Only entries with this status: proposed, accepted or superseded.
-        #[arg(long)]
-        status: Option<String>,
-        /// Include superseded decisions and ADRs, marked, with what replaced them.
-        #[arg(long)]
-        all: bool,
-        #[arg(long)]
-        json: bool,
-    },
     /// The sources this project reads, what is indexed in each, and what the last index run did.
     Stats {
-        #[arg(long)]
-        json: bool,
-    },
-    /// In the `update: true` source, create BRAIN.md, decisions/, notes/ and projects/ if missing. The only command that writes into a source.
-    Init,
-    /// Check the files agents own in the brain (the `update: true` source, or the folder you are in
-    /// when it has a BRAIN.md): frontmatter, links, and accepted decisions left as they were
-    /// accepted (by git history). Stale notes and `touches:` that match no file only warn. Exits
-    /// 1 on a failure. With --changed, list the decisions and notes whose `touches:` match instead.
-    Check {
-        /// The project the `touches:` globs are in; by default this one, by its repo name.
-        #[arg(long)]
-        project: Option<String>,
-        /// Paths of the project, or one commit range (`abc123..HEAD`) for every path its commits
-        /// touched: list the decisions and notes whose `touches:` match, and warn on dangling ones.
-        #[arg(long, num_args = 1.., value_name = "PATH or RANGE")]
-        changed: Option<Vec<String>>,
         #[arg(long)]
         json: bool,
     },
@@ -192,22 +157,6 @@ fn main() {
     }
 }
 
-/// What the current directory and the flags say to read; a source this machine lacks is warned about.
-fn resolve(cli: &Cli) -> Result<Resolved> {
-    let cwd = std::env::current_dir().context("cannot read the current directory")?;
-    let resolved = sources::resolve(
-        &cwd,
-        &Flags {
-            repo: cli.repo.clone(),
-            sources: cli.source.clone(),
-        },
-    )?;
-    for warning in &resolved.warnings {
-        eprintln!("brain: warning: {warning}");
-    }
-    Ok(resolved)
-}
-
 /// One source's part of an index run.
 #[derive(Serialize)]
 struct Named {
@@ -225,8 +174,32 @@ struct Combined {
     #[serde(flatten)]
     total: index::Report,
     sources: Vec<Named>,
-    /// The notes of every source, read against the sources as they are now.
-    notes: notes::Summary,
+}
+
+/// Brings the index of every live source up to date, and opens each for reading.
+fn index_sources(
+    resolved: &Resolved,
+    embedder: &mut dyn embed::Embedder,
+) -> Result<(Combined, Vec<Opened>)> {
+    let mut combined = Combined {
+        total: index::Report::default(),
+        sources: Vec::new(),
+    };
+    let mut opened = Vec::new();
+    for source in resolved.live() {
+        let path = store::index_path(&source.key())?;
+        let shared = pull_shared(source, &path)?;
+        let mut store = Store::create(&path, &source.root)?;
+        let report = index::index(source, &mut store, embedder, true)?;
+        combined.total.add(&source.label, &report);
+        combined.sources.push(Named {
+            source: source.label.clone(),
+            report,
+            shared,
+        });
+        opened.push(Opened::new(source, store));
+    }
+    Ok((combined, opened))
 }
 
 fn run() -> Result<()> {
@@ -239,33 +212,63 @@ fn run() -> Result<()> {
     }
     match &cli.command {
         Command::ConvertChild { .. } => unreachable!("handled above"),
-        Command::Index { json } => {
+        Command::Search { question, k, json } => {
             let resolved = resolve(&cli)?;
             let mut embedder = embed::Onnx::load()?;
-            let mut combined = Combined {
-                total: index::Report::default(),
-                sources: Vec::new(),
-                notes: notes::Summary::default(),
-            };
-            let mut opened = Vec::new();
-            for source in resolved.live() {
-                let path = store::index_path(&source.key())?;
-                let shared = pull_shared(source, &path)?;
-                let mut store = Store::create(&path, &source.root)?;
-                let report = index::index(source, &mut store, &mut embedder, true)?;
-                combined.total.add(&source.label, &report);
-                combined.sources.push(Named {
-                    source: source.label.clone(),
-                    report,
-                    shared,
-                });
-                opened.push(Opened::new(source, store));
+            let (_, opened) = index_sources(&resolved, &mut embedder)?;
+            let question = question.join(" ");
+            let hits = search::search(
+                &opened,
+                &mut embedder,
+                &search::Query {
+                    question: &question,
+                    k: *k,
+                    mode: search::Mode::Both,
+                },
+                search::EXACT_LIMIT,
+            )?;
+            if *json {
+                // One hit per line, so a tool that cuts long lines never swallows later hits.
+                let lines = hits
+                    .iter()
+                    .map(serde_json::to_string)
+                    .collect::<Result<Vec<_>, _>>()?;
+                println!("[\n{}\n]", lines.join(",\n"));
+            } else {
+                for (i, h) in hits.iter().enumerate() {
+                    let heading = if h.heading.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" › {}", h.heading)
+                    };
+                    // What an ADR is today: its status, or what replaced it.
+                    let mut notes = match (&h.superseded_by, h.status.as_deref()) {
+                        (Some(by), _) => format!("; superseded by {by}"),
+                        (None, Some(status)) => format!("; {status}"),
+                        (None, None) => String::new(),
+                    };
+                    if !h.amended_by.is_empty() {
+                        notes += &format!("; amended by {}", h.amended_by.join(", "));
+                    }
+                    println!(
+                        "{}. [{}] {}{} ({}, score {:.3}{})",
+                        i + 1,
+                        h.source,
+                        h.path,
+                        heading,
+                        h.date,
+                        h.score,
+                        notes
+                    );
+                    for line in search::wrap(&h.snippet, 100) {
+                        println!("   {line}");
+                    }
+                }
             }
-            // A note is stale when a file it was made from changed or went, which only shows
-            // once every source is indexed.
-            for n in 0..opened.len() {
-                combined.notes.add(&notes::report(&opened, n)?);
-            }
+        }
+        Command::Index { json } => {
+            let resolved = resolve(&cli)?;
+            let (combined, _) = index_sources(&resolved, &mut embed::Onnx::load()?)?;
             if *json {
                 println!("{}", serde_json::to_string(&combined)?);
             } else {
@@ -287,13 +290,6 @@ fn run() -> Result<()> {
                         println!("  {} files are copies of a newer file", r.duplicates);
                     }
                 }
-                let n = &combined.notes;
-                if n.total > 0 {
-                    println!(
-                        "notes: {} ({} stale, {} pointing at nothing, {} duplicates); see `brain stats`",
-                        n.total, n.stale, n.orphans, n.duplicates
-                    );
-                }
                 print_unconverted(
                     &combined
                         .total
@@ -312,129 +308,7 @@ fn run() -> Result<()> {
                 print_skipped(&combined.total.skipped);
             }
         }
-        Command::Search {
-            terms,
-            about,
-            k,
-            kind,
-            project,
-            since,
-            status,
-            all,
-            json,
-        } => {
-            let resolved = resolve(&cli)?;
-            let mut opened = Vec::new();
-            for source in resolved.live() {
-                let Some(store) = Store::open(&store::index_path(&source.key())?)? else {
-                    bail!(
-                        "no index for {} yet (or it is out of date); run `brain index` first",
-                        source.label
-                    );
-                };
-                opened.push(Opened::new(source, store));
-            }
-            let query = search::Query {
-                terms: terms.as_deref(),
-                about: about.as_deref(),
-                k: *k,
-            };
-            let filter = search::Filter {
-                kind: kind.as_deref(),
-                project: project.as_deref(),
-                since: since.as_deref(),
-                status: status.as_deref(),
-                all: *all,
-            };
-            let hits = if about.is_some() {
-                search::search_filtered(
-                    &opened,
-                    &mut embed::Onnx::load()?,
-                    &query,
-                    &filter,
-                    search::EXACT_LIMIT,
-                )?
-            } else {
-                search::search_filtered(
-                    &opened,
-                    &mut NoEmbedder,
-                    &query,
-                    &filter,
-                    search::EXACT_LIMIT,
-                )?
-            };
-            if *json {
-                // One hit per line, so a tool that cuts long lines never swallows later hits.
-                let lines = hits
-                    .iter()
-                    .map(serde_json::to_string)
-                    .collect::<Result<Vec<_>, _>>()?;
-                println!("[\n{}\n]", lines.join(",\n"));
-            } else {
-                for (i, h) in hits.iter().enumerate() {
-                    let heading = if h.heading.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" › {}", h.heading)
-                    };
-                    // What a decision or ADR is today: its status, or what replaced it.
-                    let mut notes = match (&h.superseded_by, h.status.as_deref()) {
-                        (Some(by), _) => format!("; superseded by {by}"),
-                        (None, Some(status)) => format!("; {status}"),
-                        (None, None) => String::new(),
-                    };
-                    if !h.amended_by.is_empty() {
-                        notes += &format!("; amended by {}", h.amended_by.join(", "));
-                    }
-                    if h.stale {
-                        notes += "; STALE note: a file it was made from changed or is gone";
-                    }
-                    println!(
-                        "{}. [{}] {}{} ({}, score {:.3}{})",
-                        i + 1,
-                        h.source,
-                        h.path,
-                        heading,
-                        h.date,
-                        h.score,
-                        notes
-                    );
-                    for line in search::wrap(&h.snippet, 100) {
-                        println!("   {line}");
-                    }
-                }
-            }
-        }
         Command::Stats { json } => stats(&resolve(&cli)?, *json)?,
-        Command::Init => {
-            let resolved = resolve(&cli)?;
-            let Some(source) = resolved.update_source() else {
-                println!("no source sets `update: true`: nothing to create, nothing written");
-                return Ok(());
-            };
-            let created = init::init(source)?;
-            if created.is_empty() {
-                println!("{}: nothing to create", source.label);
-            } else {
-                println!("{}: created {}", source.label, created.join(", "));
-            }
-        }
-        Command::Check {
-            project,
-            changed,
-            json,
-        } => {
-            let resolved = resolve(&cli)?;
-            let report = check_brain(&cli, &resolved, project.as_deref(), changed.clone())?;
-            if *json {
-                println!("{}", serde_json::to_string(&report)?);
-            } else {
-                print!("{}", report.render());
-            }
-            if !report.failures.is_empty() {
-                std::process::exit(1);
-            }
-        }
         Command::Eval {
             corpus,
             project,
@@ -508,6 +382,22 @@ fn run() -> Result<()> {
         Command::Center { corpus, out } => center(corpus, out)?,
     }
     Ok(())
+}
+
+/// What the current directory and the flags say to read; a source this machine lacks is warned about.
+fn resolve(cli: &Cli) -> Result<Resolved> {
+    let cwd = std::env::current_dir().context("cannot read the current directory")?;
+    let resolved = sources::resolve(
+        &cwd,
+        &Flags {
+            repo: cli.repo.clone(),
+            sources: cli.source.clone(),
+        },
+    )?;
+    for warning in &resolved.warnings {
+        eprintln!("brain: warning: {warning}");
+    }
+    Ok(resolved)
 }
 
 /// Starts an outside source's index from the one its brain repo's CI published, when this machine
@@ -616,12 +506,9 @@ fn print_bench(r: &bench::Results) {
         r.threads
     );
     println!(
-        "search p50   hybrid {:.0} ms, terms {:.0} ms, about {:.0} ms, of which {:.0} ms embeds the question (one process)",
-        r.search_p50_ms, r.search_terms_p50_ms, r.search_about_p50_ms, r.query_embed_p50_ms
+        "search p50   both halves {:.0} ms, full-text {:.0} ms, by meaning {:.0} ms, of which {:.0} ms embeds the question (one process)",
+        r.search_p50_ms, r.search_full_text_p50_ms, r.search_meaning_p50_ms, r.query_embed_p50_ms
     );
-    if let Some(cli) = r.cli_search_p50_ms {
-        println!("             `brain search` as run from the command line: {cli:.0} ms");
-    }
     println!(
         "indexing     {:.1} chunks/s with the model, over {} chunks",
         r.index_chunks_per_s, r.index_sample_chunks
@@ -629,71 +516,12 @@ fn print_bench(r: &bench::Results) {
     println!("targets at 1M chunks: search p50 ≤ 500 ms, indexing ≥ 12 chunks/s");
 }
 
-/// `check` on the brain this project writes to: the `--source` given, else its `update: true`
-/// source, else the folder itself when that is a brain (the brain repo's CI).
-fn check_brain(
-    cli: &Cli,
-    resolved: &Resolved,
-    project: Option<&str>,
-    changed: Option<Vec<String>>,
-) -> Result<check::Report> {
-    let found = if !cli.source.is_empty() {
-        resolved.outside.first()
-    } else if let Some(update) = resolved.update_source() {
-        Some(update)
-    } else {
-        resolved
-            .project
-            .as_ref()
-            .filter(|p| p.root.join("BRAIN.md").is_file())
-    };
-    let brain = found.context("no brain to check: no source of this project sets `update: true` (inside a brain's own folder, with a BRAIN.md, it is checked as it is)")?;
-    if !brain.exists {
-        bail!("the brain {} is not a folder on this machine", brain.label);
-    }
-    // The project is another folder than the brain; in the brain repo's CI there is none.
-    let project_source = resolved.project.as_ref().filter(|p| p.root != brain.root);
-    let project = match (project_source, project) {
-        (Some(p), name) => Some(check::Project {
-            name: name.map_or_else(|| sources::project_name(&p.root), str::to_string),
-            root: p.root.clone(),
-        }),
-        (None, Some(_)) => {
-            bail!("--project needs the project's folder: run inside the project, or give --repo")
-        }
-        (None, None) => None,
-    };
-    let cited = resolved
-        .outside
-        .iter()
-        .chain(project_source)
-        .map(|s| (s.label.clone(), s.exists.then(|| s.root.clone())))
-        .collect();
-    check::run(&check::Opts {
-        brain: &brain.root,
-        sources: cited,
-        project,
-        changed,
-    })
-}
-
 fn stats(resolved: &Resolved, json: bool) -> Result<()> {
     let mut sources = Vec::new();
     let (mut files, mut chunks) = (0, 0);
-    let live = resolved.live();
-    let mut opened = Vec::new();
-    let mut slot = Vec::new();
-    for source in &live {
-        let store = Store::open(&store::index_path(&source.key())?)?;
-        slot.push(store.map(|store| {
-            opened.push(Opened::new(source, store));
-            opened.len() - 1
-        }));
-    }
-    let mut reports: Vec<(String, notes::Report)> = Vec::new();
-    for (source, slot) in live.iter().zip(slot) {
+    for source in resolved.live() {
         let path = store::index_path(&source.key())?;
-        let Some(n) = slot else {
+        let Some(store) = Store::open(&path)? else {
             sources.push(serde_json::json!({
                 "source": source.label,
                 "root": source.root,
@@ -701,7 +529,6 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
             }));
             continue;
         };
-        let store = &opened[n].store;
         let (f, c) = store.counts()?;
         files += f;
         chunks += c;
@@ -710,15 +537,10 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
                 serde_json::from_str(&s).unwrap_or_default()
             }))
         };
-        let note_report = notes::report(&opened, n)?;
-        let note_json = serde_json::to_value(&note_report)?;
-        reports.push((source.label.clone(), note_report));
         sources.push(serde_json::json!({
             "source": source.label,
             "root": source.root,
             "indexed": true,
-            "notes": note_json,
-            "update": source.update,
             "index": path,
             "index_bytes": std::fs::metadata(&path)?.len(),
             "files": f,
@@ -757,14 +579,9 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
             continue;
         }
         println!(
-            "  index    {} ({} bytes){}",
+            "  index    {} ({} bytes)",
             s["index"].as_str().unwrap_or(""),
-            s["index_bytes"],
-            if s["update"] == true {
-                "; agents write here"
-            } else {
-                ""
-            }
+            s["index_bytes"]
         );
         println!("  indexed  {} files, {} chunks", s["files"], s["chunks"]);
         if let Some(commit) = s["shared_index"]["commit"].as_str() {
@@ -811,37 +628,6 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
         );
     }
     println!();
-    let mut stale = Vec::new();
-    let mut orphans = Vec::new();
-    let mut duplicates = Vec::new();
-    for (label, r) in &reports {
-        for n in &r.stale {
-            let why: Vec<String> = n
-                .sources
-                .iter()
-                .filter(|c| c.state != notes::State::Fresh)
-                .map(|c| format!("{} {}", c.path, c.state))
-                .collect();
-            stale.push(format!(
-                "{label}: {} ({})",
-                n.path,
-                if why.is_empty() {
-                    "names no source".to_string()
-                } else {
-                    why.join(", ")
-                }
-            ));
-        }
-        orphans.extend(r.orphans.iter().map(|p| format!("{label}: {p}")));
-        duplicates.extend(
-            r.duplicates
-                .iter()
-                .map(|d| format!("{label}: {} duplicates {}", d.path, d.of)),
-        );
-    }
-    print_list("stale notes", &stale);
-    print_list("notes pointing at nothing", &orphans);
-    print_list("duplicate notes", &duplicates);
     print_unconverted(&unconverted);
     print_skipped(&skipped);
     Ok(())
@@ -904,19 +690,4 @@ fn center(corpus: &Path, out: &Path) -> Result<()> {
     std::fs::write(out, bytes)?;
     println!("centre of {n} chunks written to {}", out.display());
     Ok(())
-}
-
-/// For a search with no `--about`: nothing is embedded, so the model isn't loaded.
-struct NoEmbedder;
-
-impl Embedder for NoEmbedder {
-    fn embed_passages(&mut self, _: &[&str]) -> Result<Vec<Vec<f32>>> {
-        bail!("no embedder")
-    }
-    fn embed_query(&mut self, _: &str) -> Result<Vec<f32>> {
-        bail!("no embedder")
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len() / 4 + 1
-    }
 }

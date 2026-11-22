@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{chunk, dedup, doc::Meta, embed, vecs};
+use crate::{adr::Status, chunk, dedup, embed, vecs};
 
 const SCHEMA: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -20,9 +20,8 @@ CREATE TABLE files (
     title TEXT NOT NULL,
     date TEXT NOT NULL,
     kind TEXT NOT NULL,
-    project TEXT NOT NULL DEFAULT '',
-    -- What a decision or ADR says (see `decisions::resolve`): `status` and the two links are what
-    -- search reads; `meta` is what the file itself declared.
+    -- What an ADR says (see `adr::resolve`): `status` and the two links are what search reads;
+    -- `meta` is what the file itself declared.
     status TEXT NOT NULL DEFAULT '',
     superseded_by TEXT NOT NULL DEFAULT '',
     amended_by TEXT NOT NULL DEFAULT '',
@@ -72,23 +71,6 @@ pub struct FileRow {
     pub own_date: Option<String>,
 }
 
-/// A note in the index.
-pub struct NoteRow {
-    pub path: String,
-    pub date: String,
-    pub simhash: Option<u64>,
-    pub meta: Meta,
-}
-
-/// What a file's `meta` column holds: nothing, or what the file declared as JSON.
-fn meta_of(column: &str) -> Result<Meta> {
-    if column.is_empty() {
-        Ok(Meta::default())
-    } else {
-        Ok(serde_json::from_str(column)?)
-    }
-}
-
 /// A chunk ready to be stored.
 pub struct NewChunk {
     pub heading: String,
@@ -105,7 +87,7 @@ pub struct NewFile {
     pub date: String,
     pub own_date: Option<String>,
     pub kind: String,
-    pub meta: Meta,
+    pub meta: Status,
     pub simhash: Option<u64>,
     pub chunks: Vec<NewChunk>,
 }
@@ -275,44 +257,6 @@ impl Store {
         Ok(None)
     }
 
-    /// What a note says about itself; `None` when `path` is no note in this index.
-    pub fn note(&self, path: &str) -> Result<Option<Meta>> {
-        let meta: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT meta FROM files WHERE path = ?1 AND kind = 'note'",
-                [path],
-                |r| r.get(0),
-            )
-            .optional()?;
-        meta.map(|m| meta_of(&m)).transpose()
-    }
-
-    /// Every note in the index, by path.
-    pub fn notes(&self) -> Result<Vec<NoteRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT path, date, simhash, meta FROM files WHERE kind = 'note' ORDER BY path",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-                r.get::<_, String>(3)?,
-            ))
-        })?;
-        rows.map(|row| {
-            let (path, date, simhash, meta) = row?;
-            Ok(NoteRow {
-                path,
-                date,
-                simhash: simhash.map(|f| f as u64),
-                meta: meta_of(&meta)?,
-            })
-        })
-        .collect()
-    }
-
     /// path → (content hash, reason) of every file that has no text to index.
     pub fn unconverted(&self) -> Result<BTreeMap<String, (String, String)>> {
         let mut stmt = self
@@ -334,8 +278,8 @@ impl Store {
         Ok(())
     }
 
-    /// Every indexed raw file as the duplicate grouping sees it. Decisions, notes and ADRs are
-    /// never copies of one another: what they say is tied to where they are and what they declare.
+    /// Every indexed raw file as the duplicate grouping sees it. ADRs are never copies of one
+    /// another: what they say is tied to where they are and what they declare.
     pub fn dedup_items(&self) -> Result<Vec<dedup::Item>> {
         let mut stmt = self
             .conn
@@ -417,14 +361,13 @@ impl Store {
         for file in files {
             remove(&tx, &file.path)?;
             tx.execute(
-                "INSERT INTO files(path, hash, title, date, kind, project, status, superseded_by, amended_by, meta, own_date, simhash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO files(path, hash, title, date, kind, status, superseded_by, amended_by, meta, own_date, simhash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     file.path,
                     file.hash,
                     file.title,
                     file.date,
                     file.kind,
-                    file.meta.project.as_deref().unwrap_or_default(),
                     file.meta.status.as_deref().unwrap_or_default(),
                     file.meta.superseded_by.as_deref().unwrap_or_default(),
                     file.meta.amended_by.join("\n"),
@@ -506,7 +449,7 @@ mod tests {
             date: "2024-01-01".into(),
             own_date: None,
             kind: "raw".into(),
-            meta: Meta::default(),
+            meta: Status::default(),
             simhash: None,
             chunks: texts
                 .iter()

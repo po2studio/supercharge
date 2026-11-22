@@ -104,5 +104,43 @@ class BrainPins(unittest.TestCase):
         self.assert_rejected(pins, "description says 175 MB")
 
 
+def check_tree(files):
+    """Runs check.py on a tree of the brain skill, its pins and `files` (path to text)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "scripts").mkdir()
+        shutil.copy(CHECK, Path(tmp) / "scripts/check.py")
+        everything = {"skills/brain/brain.json": json.dumps(GOOD), "skills/brain/SKILL.md": SKILL, **files}
+        for path, text in everything.items():
+            (Path(tmp) / path).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmp) / path).write_text(text)
+        run = subprocess.run([sys.executable, str(Path(tmp) / "scripts/check.py")], capture_output=True, text=True)
+        return run.returncode, run.stdout
+
+
+class BrainIsShortAndSimple(unittest.TestCase):
+    def test_the_brain_skill_is_at_most_500_words(self):
+        words = " ".join(["word"] * 400)
+        self.assertEqual(check_tree({"skills/brain/SKILL.md": SKILL + words}), (0, "ok\n"))
+        code, out = check_tree({"skills/brain/SKILL.md": SKILL + " ".join(["word"] * 500)})
+        self.assertEqual(code, 1)
+        self.assertIn("over 500 words", out)
+
+    def test_another_skill_has_at_most_one_line_about_the_brain(self):
+        skill = "---\nname: build-slice\ndescription: Builds.\n---\n\n"
+        one = skill + "- With the `brain` skill installed, search.\n"
+        self.assertEqual(check_tree({"skills/build-slice/SKILL.md": one}), (0, "ok\n"))
+        code, out = check_tree({"skills/build-slice/SKILL.md": one + "- With the `brain` skill, again.\n"})
+        self.assertEqual(code, 1)
+        self.assertIn("2 lines about the brain", out)
+
+    def test_no_doc_describes_what_was_removed(self):
+        for word in ("brain check", "--terms", "BRAIN.md", "/brain refresh", "ship step"):
+            code, out = check_tree({"README.md": f"# R\n\nRun {word} now.\n"})
+            self.assertEqual(code, 1, word)
+            self.assertIn(f"mentions {word}", out)
+        # History keeps its words.
+        self.assertEqual(check_tree({"docs/adr/0003-x.md": "# 3\n\nBRAIN.md\n"}), (0, "ok\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

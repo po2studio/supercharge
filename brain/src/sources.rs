@@ -29,8 +29,6 @@ pub struct Source {
     /// Absolute; canonical when the folder exists.
     pub root: PathBuf,
     pub exists: bool,
-    /// Only a `brain:` entry can set it: the one source agents write their own files into.
-    pub update: bool,
 }
 
 impl Source {
@@ -53,7 +51,6 @@ impl Source {
             kind: Kind::Outside,
             root: root.to_path_buf(),
             exists: root.is_dir(),
-            update: false,
         }
     }
 }
@@ -68,8 +65,6 @@ struct Config {
 #[derive(Debug, Deserialize)]
 struct Entry {
     path: String,
-    #[serde(default)]
-    update: bool,
 }
 
 /// The YAML block under the `## Supercharge` heading of an `AGENTS.md`; no block, no config.
@@ -97,7 +92,7 @@ fn config_of(agents_md: &str) -> Result<Config> {
     }
     serde_yaml_ng::from_str::<Option<Config>>(&block)
         .map(Option::unwrap_or_default)
-        .context("the config block under `## Supercharge` in AGENTS.md is not valid: `docs:` is a folder, `brain:` a list of `path:` with an optional `update:`")
+        .context("the config block under `## Supercharge` in AGENTS.md is not valid: `docs:` is a folder, `brain:` a list of entries with a `path:`")
 }
 
 /// The project's name: the repo name from its `origin` remote (`git@github.com:acme/courier-app.git`
@@ -154,11 +149,6 @@ impl Resolved {
             .iter()
             .chain(self.outside.iter().filter(|s| s.exists))
             .collect()
-    }
-
-    /// The source agents write their own files into, if the project set one.
-    pub fn update_source(&self) -> Option<&Source> {
-        self.outside.iter().find(|s| s.update)
     }
 }
 
@@ -247,17 +237,16 @@ pub fn resolve(cwd: &Path, flags: &Flags) -> Result<Resolved> {
             },
             root: root.clone(),
             exists: true,
-            update: false,
         }),
         None => None,
     };
 
-    let listed: Vec<(String, PathBuf, bool)> = if flags.sources.is_empty() {
+    let listed: Vec<(String, PathBuf)> = if flags.sources.is_empty() {
         let base = root.as_deref().unwrap_or(&cwd);
         config
             .brain
             .iter()
-            .map(|e| Ok((e.path.clone(), expand(&e.path, base)?, e.update)))
+            .map(|e| Ok((e.path.clone(), expand(&e.path, base)?)))
             .collect::<Result<_>>()?
     } else {
         flags
@@ -266,21 +255,19 @@ pub fn resolve(cwd: &Path, flags: &Flags) -> Result<Resolved> {
             .map(|p| {
                 let text = p.to_string_lossy().into_owned();
                 let path = expand(&text, &cwd)?;
-                Ok((text, path, false))
+                Ok((text, path))
             })
             .collect::<Result<_>>()?
     };
     let mut outside: Vec<Source> = Vec::new();
     let mut warnings = Vec::new();
-    for (label, path, update) in listed {
-        // The same folder listed twice (an alias, a symlink) is one source, and writable if any
-        // entry for it says so.
-        if let Some(seen) = outside.iter_mut().find(|s| s.root == path) {
-            seen.update |= update;
+    for (label, path) in listed {
+        // The same folder listed twice (an alias, a symlink) is one source.
+        if outside.iter().any(|s| s.root == path) {
             continue;
         }
         let exists = path.is_dir();
-        if !exists && !update {
+        if !exists {
             warnings.push(format!(
                 "the source {label} is not a folder on this machine, so it is left out"
             ));
@@ -296,24 +283,7 @@ pub fn resolve(cwd: &Path, flags: &Flags) -> Result<Resolved> {
             kind: Kind::Outside,
             root: path,
             exists,
-            update,
         });
-    }
-    let updating: Vec<&Source> = outside.iter().filter(|s| s.update).collect();
-    if updating.len() > 1 {
-        bail!(
-            "two sources set `update: true`: {} and {}; at most one source per project may",
-            updating[0].label,
-            updating[1].label
-        );
-    }
-    if let (Some(project), Some(writable)) = (&project, updating.first()) {
-        if writable.root.starts_with(&project.root) {
-            bail!(
-                "the source {} is the project or inside it, so `update: true` would make agents write into the project; point it at a folder outside",
-                writable.label
-            );
-        }
     }
     if project.is_none() && outside.is_empty() {
         bail!(
@@ -356,8 +326,9 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(c.docs.as_deref(), Some("handbook"));
-        assert_eq!(c.brain.len(), 2);
-        assert!(c.brain[0].update && !c.brain[1].update);
+        // `update: true` is for the agents that read AGENTS.md; the binary only needs the paths.
+        let paths: Vec<_> = c.brain.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["~/brains/client-a", "../policies"]);
     }
 
     #[test]
@@ -450,20 +421,8 @@ mod tests {
     }
 
     #[test]
-    fn two_sources_that_update_stop_with_both_named() {
-        let dir = project(Some(
-            "brain:\n  - path: ./one\n    update: true\n  - path: ./two\n    update: true",
-        ));
-        let e = format!("{:#}", resolved(dir.path()).unwrap_err());
-        assert!(
-            e.contains("./one") && e.contains("./two") && e.contains("update: true"),
-            "{e}"
-        );
-    }
-
-    #[test]
-    fn flags_replace_the_list_and_cannot_update() {
-        let dir = project(Some("brain:\n  - path: ./listed\n    update: true"));
+    fn flags_replace_the_list() {
+        let dir = project(Some("brain:\n  - path: ./listed"));
         let extra = TempDir::new().unwrap();
         let r = resolve(
             dir.path(),
@@ -474,7 +433,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.outside.len(), 1);
-        assert!(r.update_source().is_none());
         assert_eq!(r.outside[0].root, extra.path().canonicalize().unwrap());
     }
 
@@ -513,43 +471,9 @@ mod tests {
             },
             root: dir.path().to_path_buf(),
             exists: true,
-            update: false,
         };
         let o = Source::outside("x", dir.path());
         assert_ne!(p.key(), o.key());
-    }
-
-    #[test]
-    fn a_source_agents_write_into_cannot_be_the_project_or_inside_it() {
-        for entry in [
-            "  - path: .\n    update: true",
-            "  - path: ./brain\n    update: true",
-        ] {
-            let dir = project(Some(&format!("brain:\n{entry}")));
-            let e = format!("{:#}", resolved(dir.path()).unwrap_err());
-            assert!(e.contains("write into the project"), "{entry}: {e}");
-        }
-        // Read-only, the same folder is fine: it is only read.
-        let dir = project(Some("brain:\n  - path: ./brain"));
-        assert!(resolved(dir.path()).is_ok());
-        // A symlink out of the project to a folder inside it does not get round the rule.
-        let dir = project(Some("brain:\n  - path: ../alias\n    update: true"));
-        let parent = dir.path().parent().unwrap();
-        let alias = parent.join(format!(
-            "alias-{}",
-            dir.path().file_name().unwrap().to_string_lossy()
-        ));
-        std::os::unix::fs::symlink(dir.path(), &alias).unwrap();
-        fs::write(
-            dir.path().join("AGENTS.md"),
-            agents(&format!(
-                "brain:\n  - path: {}\n    update: true",
-                alias.display()
-            )),
-        )
-        .unwrap();
-        assert!(resolved(dir.path()).is_err());
-        fs::remove_file(alias).unwrap();
     }
 
     #[test]
@@ -575,19 +499,18 @@ mod tests {
     }
 
     #[test]
-    fn the_same_folder_listed_twice_is_one_source_and_writable_if_any_entry_says_so() {
+    fn the_same_folder_listed_twice_is_one_source() {
         let outer = TempDir::new().unwrap();
         let proj = outer.path().join("repo");
         fs::create_dir_all(&proj).unwrap();
         fs::create_dir(outer.path().join("brain")).unwrap();
         fs::write(
             proj.join("AGENTS.md"),
-            agents("brain:\n  - path: ../brain\n  - path: ../repo/../brain\n    update: true"),
+            agents("brain:\n  - path: ../brain\n  - path: ../repo/../brain"),
         )
         .unwrap();
         let r = resolved(&proj).unwrap();
         assert_eq!(r.outside.len(), 1);
-        assert!(r.update_source().is_some());
         assert_eq!(r.outside[0].label, "../brain");
     }
 

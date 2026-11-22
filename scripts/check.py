@@ -84,6 +84,29 @@ if pins.exists():
                     f"skills/brain/SKILL.md: description says {stated.group(1)} MB, brain.json says {min(sizes) / 1e6:.0f} to {max(sizes) / 1e6:.0f} MB"
                 )
 
+# The brain skill stays short, and the other four carry at most one line about it ([ADR 0005]).
+MAX_BRAIN_WORDS = 500
+if brain_skill.exists() and len(brain_skill.read_text().split()) > MAX_BRAIN_WORDS:
+    errors.append(f"skills/brain/SKILL.md: over {MAX_BRAIN_WORDS} words")
+for other in ("supercharge", "build-slice", "drive-feature", "living-docs"):
+    path = root / f"skills/{other}/SKILL.md"
+    lines = [l for l in path.read_text().splitlines() if "`brain`" in l] if path.exists() else []
+    if len(lines) > 1:
+        errors.append(f"skills/{other}/SKILL.md: {len(lines)} lines about the brain, at most 1")
+
+# What ADR 0005 removed is named nowhere that describes today (ADRs, feature docs and runs are history).
+REMOVED = (
+    "brain check", "brain init", "--terms", "--about", "--kind", "--since", "--status",
+    "--changed", "BRAIN.md", "`touches`", "/brain refresh", "ship step", "brain-stale",
+)
+today = [root / "README.md", root / "AGENTS.md", root / "docs/PRODUCT.md", root / "docs/ARCHITECTURE.md"]
+today += sorted(root.glob("skills/**/*.md")) + sorted(root.glob("skills/brain/*.yml"))
+for doc in today:
+    if doc.exists():
+        for word in REMOVED:
+            if word in doc.read_text():
+                errors.append(f"{doc.relative_to(root)}: mentions {word}, which no longer exists")
+
 for doc in sorted(root.rglob("*.md")):
     if {".git", "target", "assets"} & set(doc.relative_to(root).parts):
         continue

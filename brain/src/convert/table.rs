@@ -38,7 +38,6 @@ pub fn csv(bytes: &[u8], tsv: bool) -> Converted {
         title: None,
         date: None,
         prose: false,
-        meta: Default::default(),
     }
 }
 
@@ -100,7 +99,6 @@ pub fn spreadsheet(bytes: &[u8]) -> Result<Converted, String> {
         title,
         date,
         prose: true,
-        meta: Default::default(),
     })
 }
 
