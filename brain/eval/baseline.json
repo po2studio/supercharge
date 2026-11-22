@@ -1,20 +1,20 @@
 {
-  "questions": 88,
+  "questions": 80,
   "sources": 2,
-  "files": 138,
-  "chunks": 192,
-  "terms": {
-    "recall_at_5": 0.803,
-    "mrr": 0.769
+  "files": 128,
+  "chunks": 182,
+  "full_text": {
+    "recall_at_5": 0.673,
+    "mrr": 0.642
   },
-  "about": {
-    "recall_at_5": 0.917,
-    "mrr": 0.882
+  "meaning": {
+    "recall_at_5": 0.906,
+    "mrr": 0.868
   },
   "hybrid": {
-    "recall_at_5": 0.9,
-    "mrr": 0.849
+    "recall_at_5": 0.91,
+    "mrr": 0.874
   },
-  "p50_ms": 4.0,
-  "chunks_per_s": 57.0
+  "p50_ms": 6.526,
+  "chunks_per_s": 21.529
 }

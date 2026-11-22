@@ -45,7 +45,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Ask a question in plain words: the index is brought up to date first, then the best matches
-    /// by words and by meaning come back, one per file.
+    /// by meaning, and by any ID or code in the question, come back, one per file.
     Search {
         /// The question, as you would ask a colleague.
         #[arg(required = true, num_args = 1.., value_name = "QUESTION")]

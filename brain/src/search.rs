@@ -13,21 +13,13 @@ use crate::{embed::Embedder, sources::Source, store::Store, vecs};
 
 /// The reciprocal-rank-fusion constant.
 const RRF_K: f64 = 60.0;
-/// What each ranked list counts for in the fusion: the question's words, its exact tokens (an ID,
-/// a code, a name, a quoted phrase) on top of them, and its meaning.
-const WEIGHT_WORDS: f64 = 1.0;
-const WEIGHT_EXACT: f64 = 1.0;
-const WEIGHT_MEANING: f64 = 1.0;
-/// TEMPORARY tuning knob.
-fn tuned() -> [f64; 3] {
-    match std::env::var("BRAIN_FUSE") {
-        Ok(s) => {
-            let v: Vec<f64> = s.split(',').filter_map(|x| x.parse().ok()).collect();
-            [v[0], v[1], v[2]]
-        }
-        Err(_) => [WEIGHT_WORDS, WEIGHT_EXACT, WEIGHT_MEANING],
-    }
-}
+/// How many chunks the question's exact tokens add to the by-meaning candidates. Measured on
+/// the eval: more of them crowd out right answers the meaning search had (recall@5 fell from 0.91
+/// to 0.88 at five).
+const EXACT_MATCHES: usize = 3;
+/// A token that matches more than this share of an index's chunks (at least 10 chunks) is not
+/// looked up as exact.
+const COMMON_PERCENT: usize = 1;
 /// Up to this many chunks the vector search scores every vector exactly; beyond it the 1-bit
 /// codes pick the candidates to rescore.
 pub const EXACT_LIMIT: usize = 50_000;
@@ -76,22 +68,13 @@ pub struct Query<'a> {
     pub mode: Mode,
 }
 
-/// What a question becomes for full-text search: FTS5 phrases, each of which is only used where it
-/// is specific (see `specific`).
+/// What a question becomes for full-text search, as FTS5 phrases.
 #[derive(Debug, PartialEq)]
-struct Words {
-    /// Each of the question's words.
-    any: Vec<String>,
+struct Terms {
+    /// Each of its words.
+    words: Vec<String>,
     /// Its IDs and codes (a digit, or `-` `_` `/` `@` inside), acronyms and quoted phrases.
-    codes: Vec<String>,
-    /// Its names: capitalised words after the first, a run of them as one.
-    names: Vec<String>,
-}
-
-impl Words {
-    fn exact(&self) -> Vec<String> {
-        self.codes.iter().chain(&self.names).cloned().collect()
-    }
+    exact: Vec<String>,
 }
 
 /// An FTS5 phrase for `text`, or none when it has no letter or digit to match.
@@ -101,46 +84,27 @@ fn phrase(text: &str) -> Option<String> {
         .then(|| format!("\"{}\"", text.replace('"', " ")))
 }
 
-fn full_text(question: &str) -> Words {
+fn terms(question: &str) -> Terms {
     // Quoted phrases are exact as they stand; what is outside the quotes is split into words.
-    let mut codes: Vec<String> = Vec::new();
-    let mut names: Vec<String> = Vec::new();
-    let mut plain = String::new();
+    let mut exact: Vec<String> = Vec::new();
     for (n, part) in question.split(['"', '“', '”']).enumerate() {
         if n % 2 == 1 {
-            codes.extend(phrase(part.trim()));
+            exact.extend(phrase(part.trim()));
         } else {
-            plain.push_str(part);
-            plain.push(' ');
+            for raw in part.split_whitespace() {
+                let word = raw.trim_matches(|c: char| !c.is_alphanumeric());
+                let mut letters = word.chars().filter(|c| c.is_alphabetic());
+                let code = word.chars().any(|c| c.is_ascii_digit())
+                    || word.contains(['-', '_', '/', '@'])
+                    || (letters.clone().count() >= 2 && letters.all(char::is_uppercase));
+                if code {
+                    exact.extend(phrase(word));
+                }
+            }
         }
     }
-    let mut name: Vec<&str> = Vec::new();
-    let mut starts_sentence = true;
-    for raw in plain.split_whitespace() {
-        let word = raw.trim_matches(|c: char| !c.is_alphanumeric());
-        let ends_sentence = raw.ends_with(['.', '?', '!', ':']);
-        let letters = word.chars().filter(|c| c.is_alphabetic());
-        let code = word.chars().any(|c| c.is_ascii_digit())
-            || word.contains(['-', '_', '/', '@'])
-            || (letters.clone().count() >= 2 && letters.clone().all(char::is_uppercase));
-        let capitalised = !starts_sentence
-            && word.chars().count() >= 2
-            && word.chars().next().is_some_and(char::is_uppercase);
-        if capitalised && !code {
-            name.push(word);
-        } else if !name.is_empty() {
-            names.extend(phrase(&name.join(" ")));
-            name.clear();
-        }
-        if code {
-            codes.extend(phrase(word));
-        }
-        starts_sentence = ends_sentence;
-    }
-    names.extend(phrase(&name.join(" ")));
-
     let mut seen = HashSet::new();
-    let any: Vec<String> = plain
+    let words: Vec<String> = question
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.chars().count() >= 2)
         .map(str::to_lowercase)
@@ -149,29 +113,22 @@ fn full_text(question: &str) -> Words {
         .map(|w| format!("\"{w}\""))
         .collect();
     let mut seen = HashSet::new();
-    codes.retain(|p| seen.insert(p.clone()));
-    names.retain(|p| seen.insert(p.clone()));
-    Words { any, codes, names }
+    exact.retain(|p| seen.insert(p.clone()));
+    Terms { words, exact }
 }
 
 /// A source's index, open for reading.
 pub struct Opened {
     pub label: String,
     pub root: PathBuf,
-    is_project: bool,
     pub store: Store,
 }
 
 impl Opened {
-    pub fn is_project(&self) -> bool {
-        self.is_project
-    }
-
     pub fn new(source: &Source, store: Store) -> Opened {
         Opened {
             label: source.label.clone(),
             root: source.root.clone(),
-            is_project: source.is_project(),
             store,
         }
     }
@@ -186,59 +143,50 @@ pub fn search(
     q: &Query,
     exact_limit: usize,
 ) -> Result<Vec<Hit>> {
-    run(sources, embedder, q, exact_limit, specific_percent())
-}
-
-fn run(
-    sources: &[Opened],
-    embedder: &mut dyn Embedder,
-    q: &Query,
-    exact_limit: usize,
-    percent: usize,
-) -> Result<Vec<Hit>> {
     if q.question.trim().is_empty() {
         bail!("ask a question: brain search \"<question>\"");
     }
-    let words = full_text(q.question);
+    let terms = terms(q.question);
     let query_vector = (q.mode != Mode::FullText)
         .then(|| embedder.embed_query(q.question))
         .transpose()?;
+    let words = terms.words.join(" OR ");
+    // Per source, the exact tokens that say something there.
+    let exact: Vec<String> = if q.mode == Mode::Both {
+        sources
+            .iter()
+            .map(|s| specific(&s.store, &terms.exact))
+            .collect::<Result<_>>()?
+    } else {
+        Vec::new()
+    };
     // One hit per file, its best chunk. A file with many matching chunks can fill the candidate
     // pool on its own, so the pool grows until it yields enough files or holds every match.
     let mut pool = (q.k * 10).max(50);
-    // Per source, the question's words and exact tokens that say something there.
-    let narrowed: Vec<[String; 2]> = if q.mode == Mode::Meaning {
-        Vec::new()
-    } else {
-        sources
-            .iter()
-            .map(|s| {
-                Ok([
-                    specific(&s.store, &words.any, percent)?,
-                    specific(&s.store, &words.exact(), percent)?,
-                ])
-            })
-            .collect::<Result<_>>()?
-    };
     loop {
         let mut exhausted = true;
-        let mut lists: Vec<(f64, Vec<(Key, f64)>)> = Vec::new();
-        let w = tuned();
-        for (i, weight) in [w[0], w[1]].into_iter().enumerate() {
-            if narrowed.iter().all(|n| n[i].is_empty()) {
-                continue;
-            }
-            let list = merge(sources, pool, &mut exhausted, |n, s| match narrowed[n][i].as_str() {
-                "" => Ok(Vec::new()),
-                text => fts(&s.store, text, pool),
-            })?;
-            lists.push((weight, list));
+        let mut lists: Vec<Vec<(Key, f64)>> = Vec::new();
+        if q.mode == Mode::FullText && !words.is_empty() {
+            lists.push(merge(sources, pool, &mut exhausted, |_, s| {
+                fts(&s.store, &words, pool)
+            })?);
+        }
+        if exact.iter().any(|e| !e.is_empty()) {
+            // The best few matches only: they join the by-meaning list, they do not outvote it.
+            lists.push(merge(
+                sources,
+                EXACT_MATCHES,
+                &mut true,
+                |n, s| match exact[n].as_str() {
+                    "" => Ok(Vec::new()),
+                    text => fts(&s.store, text, EXACT_MATCHES),
+                },
+            )?);
         }
         if let Some(v) = &query_vector {
-            let list = merge(sources, pool, &mut exhausted, |_, s| {
+            lists.push(merge(sources, pool, &mut exhausted, |_, s| {
                 vector(&s.store, v, pool, exact_limit)
-            })?;
-            lists.push((w[2], list));
+            })?);
         }
         let mut hits: Vec<(usize, Hit)> = Vec::new();
         // Superseded hits go last, so they don't count towards the `k` that fill the results.
@@ -264,44 +212,6 @@ fn run(
         }
         pool *= 4;
     }
-}
-
-/// TEMPORARY: the raw ranked lists (file-level, best chunk per file) for offline fusion study.
-pub fn dump(
-    sources: &[Opened],
-    embedder: &mut dyn Embedder,
-    question: &str,
-) -> Result<serde_json::Value> {
-    let words = full_text(question);
-    let pool = 100;
-    let file_list = |lists: Vec<(Key, f64)>| -> Result<Vec<(String, f64)>> {
-        let mut seen = HashSet::new();
-        let mut out = Vec::new();
-        for ((n, id), score) in lists {
-            if let Some(hit) = chunk_hit(&sources[n], id, score)? {
-                if seen.insert((n, hit.path.clone())) {
-                    let name = if sources[n].is_project { format!("project:{}", hit.path) } else { hit.path };
-                    out.push((name, score));
-                }
-            }
-        }
-        Ok(out)
-    };
-    let mut ex = false;
-    let v = embedder.embed_query(question)?;
-    let meaning = merge(sources, pool, &mut ex, |_, s| vector(&s.store, &v, pool, EXACT_LIMIT))?;
-    let mut result = serde_json::Map::new();
-    result.insert("meaning".into(), serde_json::to_value(file_list(meaning)?)?);
-    for (name, terms) in [("any", &words.any), ("codes", &words.codes), ("names", &words.names)] {
-        for (suffix, filtered) in [("", true), ("_all", false)] {
-            let list = merge(sources, pool, &mut ex, |_, s| {
-                let text = if filtered { specific(&s.store, terms, 1)? } else { terms.join(" OR ") };
-                if text.is_empty() { Ok(Vec::new()) } else { fts(&s.store, &text, pool) }
-            })?;
-            result.insert(format!("{name}{suffix}"), serde_json::to_value(file_list(list)?)?);
-        }
-    }
-    Ok(serde_json::Value::Object(result))
 }
 
 /// The best `k` of the hits (most relevant first), the current ones before any superseded ADR.
@@ -376,12 +286,12 @@ fn merge(
     Ok(all)
 }
 
-/// Weighted reciprocal-rank fusion of ranked lists.
-fn fuse(lists: &[(f64, Vec<(Key, f64)>)]) -> Vec<(Key, f64)> {
+/// Reciprocal-rank fusion of ranked lists.
+fn fuse(lists: &[Vec<(Key, f64)>]) -> Vec<(Key, f64)> {
     let mut score: HashMap<Key, f64> = HashMap::new();
-    for (weight, list) in lists {
+    for list in lists {
         for (rank, (key, _)) in list.iter().enumerate() {
-            *score.entry(*key).or_insert(0.0) += weight / (RRF_K + rank as f64 + 1.0);
+            *score.entry(*key).or_insert(0.0) += 1.0 / (RRF_K + rank as f64 + 1.0);
         }
     }
     let mut out: Vec<(Key, f64)> = score.into_iter().collect();
@@ -389,27 +299,23 @@ fn fuse(lists: &[(f64, Vec<(Key, f64)>)]) -> Vec<(Key, f64)> {
     out
 }
 
-/// What share of an index's chunks (in percent; at least 10 chunks) a term may match and still be
-/// searched for: a word that most passages share says nothing the by-meaning half does not say
-/// better, and only crowds the ranking with passages that happen to use it.
-fn specific_percent() -> usize {
-    std::env::var("BRAIN_DF").ok().and_then(|s| s.parse().ok()).unwrap_or(1)
-}
-
-/// The terms (FTS5 phrases) that match few enough chunks of this index to say something, as one
-/// query; empty when none does. Counting stops one past the limit, so a common word costs no more
-/// than a rare one however big the index is.
-fn specific(store: &Store, terms: &[String], percent: usize) -> Result<String> {
+/// The exact tokens (FTS5 phrases) that match few enough chunks of this index to say something,
+/// as one query; empty when none does. A token most passages share (`ref-1` in every invoice)
+/// says nothing the by-meaning half does not say better, and only crowds the ranking. Counting
+/// stops one past the limit, so a common token costs no more than a rare one however big the
+/// index is.
+fn specific(store: &Store, terms: &[String]) -> Result<String> {
     if terms.is_empty() {
         return Ok(String::new());
     }
-    let limit = ((store.counts()?.1 as usize * percent) / 100).max(10);
+    let limit = ((store.counts()?.1 as usize * COMMON_PERCENT) / 100).max(10);
     let mut stmt = store
         .conn
         .prepare("SELECT count(*) FROM (SELECT 1 FROM fts WHERE fts MATCH ?1 LIMIT ?2)")?;
     let mut keep: Vec<&str> = Vec::new();
     for term in terms {
-        let matches: i64 = stmt.query_row(rusqlite::params![term, limit as i64 + 1], |r| r.get(0))?;
+        let matches: i64 =
+            stmt.query_row(rusqlite::params![term, limit as i64 + 1], |r| r.get(0))?;
         if matches as usize <= limit {
             keep.push(term);
         }
@@ -692,12 +598,6 @@ mod tests {
         search(s, &mut Fake, &Query { question, k, mode }, EXACT_LIMIT).unwrap()
     }
 
-    /// `ask`, with every word counting as specific however many chunks it matches.
-    fn ask_every_word(s: &[Opened], question: &str, k: usize, mode: Mode) -> Vec<Hit> {
-        let q = Query { question, k, mode };
-        run(s, &mut Fake, &q, EXACT_LIMIT, 100).unwrap()
-    }
-
     const DOCS: &[(&str, &str)] = &[
         ("pets.md", "# Pets\n\nDogs and cats are welcome on Fridays."),
         ("leave.md", "# Leave\n\nTwenty five days of paid holiday."),
@@ -710,46 +610,61 @@ mod tests {
 
     #[test]
     fn a_question_becomes_its_words_and_its_exact_tokens() {
-        let w = full_text("Who paid invoice INV-2024-0042 and how much?");
-        assert_eq!(w.exact(), ["\"INV-2024-0042\""]);
-        for word in ["\"who\"", "\"paid\"", "\"inv\"", "\"2024\"", "\"0042\"", "\"much\""] {
-            assert!(w.any.contains(&word.to_string()), "{:?}", w.any);
+        let t = terms("Who paid invoice INV-2024-0042 and how much?");
+        assert_eq!(t.exact, ["\"INV-2024-0042\""]);
+        for word in [
+            "\"who\"", "\"paid\"", "\"inv\"", "\"2024\"", "\"0042\"", "\"much\"",
+        ] {
+            assert!(t.words.contains(&word.to_string()), "{:?}", t.words);
         }
-        // Names after the first word, a run of them as one phrase; a plain question has none.
-        let w = full_text("Where did Guðmundur Ólafsson work before Hrafn?");
-        assert_eq!(w.names, ["\"Guðmundur Ólafsson\"", "\"Hrafn\""]);
-        assert!(full_text("Can I bring my dog to work?").exact().is_empty());
+        // Capitalised names are plain words: the by-meaning half reads them.
+        assert!(terms("Where did Guðmundur Ólafsson work before Hrafn?")
+            .exact
+            .is_empty());
+        assert!(terms("Can I bring my dog to work?").exact.is_empty());
         // Quoted phrases and acronyms.
-        let w = full_text("What is our \"back out\" rule for the ADR?");
-        assert_eq!(w.exact(), ["\"back out\"", "\"ADR\""]);
+        let t = terms("What is our \"back out\" rule for the ADR?");
+        assert_eq!(t.exact, ["\"back out\"", "\"ADR\""]);
         // Words are quoted, so full-text syntax in a question is only text.
-        let w = full_text("cats AND (dogs OR NOT birds) *");
+        let t = terms("cats AND (dogs OR NOT birds) *");
         assert_eq!(
-            w.any,
-            ["\"cats\"", "\"and\"", "\"dogs\"", "\"or\"", "\"not\"", "\"birds\""]
+            t.words,
+            [
+                "\"cats\"",
+                "\"and\"",
+                "\"dogs\"",
+                "\"or\"",
+                "\"not\"",
+                "\"birds\""
+            ]
         );
-        assert!(full_text("?!").any.is_empty());
+        assert!(terms("?!").words.is_empty());
     }
 
     #[test]
-    fn a_word_most_passages_share_is_left_to_the_by_meaning_half() {
-        // `pay` is in all 30 passages, `zebrafish` in one: with 30 chunks a term may match 10.
+    fn a_token_most_passages_share_is_not_looked_up_as_exact() {
+        // `ref-1` is in all 30 passages, `zeb-9` in one: with 30 chunks a token may match 10.
         let files: Vec<(String, String)> = (0..30)
             .map(|n| {
-                let extra = if n == 7 { " zebrafish" } else { "" };
-                (format!("d{n:02}.md"), format!("# Doc {n}\n\nPay rules number {n}{extra}."))
+                let extra = if n == 7 { " ZEB-9" } else { "" };
+                (
+                    format!("d{n:02}.md"),
+                    format!("# Doc {n}\n\nPay rules REF-1 number {n}{extra}."),
+                )
             })
             .collect();
-        let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
         let (_d, s) = brain(&refs);
-        let terms = |q: &str| specific(&s[0].store, &full_text(q).any, 1).unwrap();
-        assert_eq!(terms("pay zebrafish"), "\"zebrafish\"");
-        assert_eq!(terms("pay rules"), "");
-        // So a question of only common words finds nothing by words; by meaning it still ranks.
-        assert!(ask(&s, "pay rules", 5, Mode::FullText).is_empty());
-        assert_eq!(ask(&s, "pay rules", 5, Mode::Both).len(), 5);
-        // And one rare word among them is what the full-text half searches for.
-        assert_eq!(paths(&ask(&s, "pay zebrafish", 5, Mode::FullText)), ["d07.md"]);
+        let kept = |q: &str| specific(&s[0].store, &terms(q).exact).unwrap();
+        assert_eq!(kept("what is ZEB-9 or REF-1?"), "\"ZEB-9\"");
+        assert_eq!(kept("what is REF-1?"), "");
+        // The by-meaning half ranks without it.
+        assert_eq!(ask(&s, "what is REF-1?", 5, Mode::Both).len(), 5);
+        // And a rare token among common ones is looked up, so its file comes first.
+        assert_eq!(ask(&s, "pay rules ZEB-9", 5, Mode::Both)[0].path, "d07.md");
     }
 
     #[test]
@@ -866,7 +781,7 @@ mod tests {
         let first = fts(&s[0].store, "\"banana\"", 50).unwrap();
         let in_big = |id: i64| chunk_hit(&s[0], id, 0.0).unwrap().unwrap().path == "big.md";
         assert!(first.iter().all(|(id, _)| in_big(*id)));
-        let mut found = paths(&ask_every_word(&s, "banana", 3, Mode::FullText))
+        let mut found = paths(&ask(&s, "banana", 3, Mode::FullText))
             .into_iter()
             .map(String::from)
             .collect::<Vec<_>>();
@@ -970,7 +885,7 @@ mod tests {
             ],
         );
         let b = source(&dir, "b", &[("big.md", &section("b"))]);
-        let hits = ask_every_word(&[a, b], "banana", 3, Mode::FullText);
+        let hits = ask(&[a, b], "banana", 3, Mode::FullText);
         let mut found: Vec<(&str, &str)> = hits
             .iter()
             .map(|h| (h.source.as_str(), h.path.as_str()))

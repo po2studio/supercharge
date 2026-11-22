@@ -659,3 +659,41 @@ fn a_superseded_adr_comes_after_what_replaced_it_and_an_amended_adr_brings_its_a
     );
     assert_eq!(before, snapshot(&repo), "nothing in the project is written");
 }
+
+/// `--help` lists the commands that remain and none that were removed.
+#[test]
+fn help_lists_one_search_command_and_no_removed_flag() {
+    let env = small_brain();
+    let help = |args: &[&str]| String::from_utf8(env.cmd(args).stdout).unwrap();
+    let top = help(&["--help"]);
+    let commands: Vec<&str> = top
+        .lines()
+        .skip_while(|l| !l.starts_with("Commands:"))
+        .skip(1)
+        .take_while(|l| l.starts_with("  "))
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    assert_eq!(
+        commands,
+        ["search", "index", "stats", "eval", "pack", "bench", "help"],
+        "{top}"
+    );
+    let search = help(&["search", "--help"]);
+    for gone in [
+        "--terms",
+        "--about",
+        "--kind",
+        "--project",
+        "--since",
+        "--status",
+        "--all",
+    ] {
+        assert!(
+            !search.contains(gone),
+            "search --help lists {gone}:\n{search}"
+        );
+    }
+    for gone in ["BRAIN.md", "brain check", "decisions/", "notes/", "touches"] {
+        assert!(!top.contains(gone), "--help mentions {gone}:\n{top}");
+    }
+}

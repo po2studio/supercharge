@@ -95,27 +95,6 @@ fn config_of(agents_md: &str) -> Result<Config> {
         .context("the config block under `## Supercharge` in AGENTS.md is not valid: `docs:` is a folder, `brain:` a list of entries with a `path:`")
 }
 
-/// The project's name: the repo name from its `origin` remote (`git@github.com:acme/courier-app.git`
-/// is `courier-app`), else the folder's name.
-pub fn project_name(root: &Path) -> String {
-    let remote = std::process::Command::new("git")
-        .args(["config", "--get", "remote.origin.url"])
-        .current_dir(root)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    let name = remote
-        .as_deref()
-        .and_then(|url| url.trim_end_matches('/').rsplit(['/', ':']).next())
-        .map(|n| n.strip_suffix(".git").unwrap_or(n).to_string())
-        .filter(|n| !n.is_empty());
-    name.unwrap_or_else(|| {
-        root.file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
-    })
-}
-
 /// The project containing `from`: the nearest folder with a `.git`, else the nearest with an
 /// `AGENTS.md`.
 pub fn find_project(from: &Path) -> Option<PathBuf> {

@@ -76,7 +76,7 @@ Medium (default). This is the first runnable code in the bundle, so the binary g
 
 **Search contract.**
 - Invocation: `brain search "<question>" [-k N] [--json]`, run from the project's root. It first indexes what changed in each source.
-- It runs full-text (BM25, any of the question's words, exact tokens such as IDs, codes, names and quoted phrases weighted up) and by-meaning search on the question as given, fuses them by rank, and returns the top `k` (default 5), one hit per file: its source, path, heading, date and the best passage.
+- It runs by-meaning search on the question as given, and adds the best full-text (BM25) matches of the exact tokens in it (IDs, codes, acronyms, quoted phrases; each only if it matches under 1% of an index's chunks), fuses them by rank, and returns the top `k` (default 5), one hit per file: its source, path, heading, date and the best passage. Full-text search of every word of the question lowered recall on plain questions in the eval (0.906 by meaning alone, 0.80 fused with it), so words are left to the by-meaning half.
 - Each hit: `{source, path, file, title, heading, date, kind, status, score, snippet, versions}`. `date` is the frontmatter date, else the file's last git commit date, else its mtime.
 - On the eval, the fused search must find at least as many answers in the top 5 as the best of full-text or by-meaning alone.
 

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -40,6 +40,8 @@ CREATE TABLE unconverted (
     hash TEXT NOT NULL,
     reason TEXT NOT NULL
 );
+-- Size and modification time of each file when it was read: see `Store::stamps`.
+CREATE TABLE stamps (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL);
 CREATE TABLE chunks (
     id INTEGER PRIMARY KEY,
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -221,6 +223,27 @@ impl Store {
         Ok(())
     }
 
+    /// path → (size, modification time in ns) each file had when its content was last read. A
+    /// file with the same stamp as now is the same file, which is how a search that finds nothing
+    /// changed avoids reading every byte of a big source.
+    pub fn stamps(&self) -> Result<HashMap<String, (i64, i64)>> {
+        let mut stmt = self.conn.prepare("SELECT path, size, mtime FROM stamps")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Records the stamp of a file whose indexed content is what was read at that stamp.
+    pub fn set_stamps(&mut self, stamps: &[(&str, (i64, i64))]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for (path, (size, mtime)) in stamps {
+            tx.execute(
+                "INSERT OR REPLACE INTO stamps(path, size, mtime) VALUES (?1, ?2, ?3)",
+                params![path, size, mtime],
+            )?;
+        }
+        Ok(tx.commit()?)
+    }
+
     /// What the index holds about each file in it, by path.
     pub fn files(&self) -> Result<BTreeMap<String, FileRow>> {
         let mut stmt = self
@@ -237,24 +260,6 @@ impl Store {
             ))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// The content hash of a file the index holds or has found to have no text.
-    pub fn hash_of(&self, path: &str) -> Result<Option<String>> {
-        for table in ["files", "unconverted"] {
-            let hash = self
-                .conn
-                .query_row(
-                    &format!("SELECT hash FROM {table} WHERE path = ?1"),
-                    [path],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if hash.is_some() {
-                return Ok(hash);
-            }
-        }
-        Ok(None)
     }
 
     /// path → (content hash, reason) of every file that has no text to index.
@@ -425,6 +430,7 @@ fn remove(tx: &rusqlite::Transaction, path: &str) -> Result<()> {
     )?;
     tx.execute("DELETE FROM files WHERE path = ?1", [path])?;
     tx.execute("DELETE FROM unconverted WHERE path = ?1", [path])?;
+    tx.execute("DELETE FROM stamps WHERE path = ?1", [path])?;
     Ok(())
 }
 
