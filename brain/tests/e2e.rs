@@ -1040,3 +1040,91 @@ fn a_note_is_stale_when_its_sources_change_and_fresh_again_once_refreshed() {
     assert_eq!(listing("policies"), ["meals.md", "travel.md"]);
     assert_eq!(listing("repo"), ["AGENTS.md", "docs"]);
 }
+
+/// A fresh note that answers the question is a right answer, as well as the raw files it
+/// summarises: a question's `accept` names it, and it counts like an `expect` file. It must exist
+/// and be fresh, or the question would test a trap.
+#[test]
+fn a_question_accepts_a_fresh_note_as_well_as_the_raw_files() {
+    let raw = "# Axolotls\n\nThe axolotl tank is cleaned every Tuesday by the facilities team.\n";
+    let corpus = TempDir::new().unwrap();
+    let write = |p: &str, t: &str| {
+        let full = corpus.path().join(p);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(full, t).unwrap();
+    };
+    write("facilities/axolotls.md", raw);
+    write(
+        "notes/axolotls.md",
+        &note(
+            "Axolotl tank care",
+            &["When is the axolotl tank cleaned?"],
+            &[("facilities/axolotls.md", raw)],
+            "2025-02-10",
+        ),
+    );
+    let project = TempDir::new().unwrap();
+    fs::write(project.path().join("README.md"), "# P\n\nA service.\n").unwrap();
+    let questions = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+    let eval = |yaml: &str| {
+        fs::write(questions.path().join("q.yaml"), yaml).unwrap();
+        let baseline = cache.path().join("baseline.json");
+        let out = run(
+            env!("CARGO_BIN_EXE_brain"),
+            project.path(),
+            corpus.path(),
+            cache.path(),
+            &[
+                "eval",
+                "--corpus",
+                corpus.path().to_str().unwrap(),
+                "--project",
+                project.path().to_str().unwrap(),
+                "--questions",
+                questions.path().to_str().unwrap(),
+                "--baseline",
+                baseline.to_str().unwrap(),
+                "--update-baseline",
+                "--json",
+            ],
+        );
+        (out.status.success(), out)
+    };
+    let question = |extra: &str| {
+        format!(
+            "- id: axolotl\n  question: When is the axolotl tank cleaned?\n  terms: axolotl\n  expect: [facilities/axolotls.md]\n{extra}"
+        )
+    };
+    // The note ranks first, so with only the raw file expected the answer is second.
+    let (ok, out) = eval(&question(""));
+    assert!(ok, "{}", String::from_utf8_lossy(&out.stderr));
+    let before: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(before["terms"]["mrr"], 0.5, "{before}");
+    // Accepting the note makes it a right answer: first.
+    let (ok, out) = eval(&question("  accept: [notes/axolotls.md]\n"));
+    assert!(ok, "{}", String::from_utf8_lossy(&out.stderr));
+    let after: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(after["terms"]["mrr"], 1.0, "{after}");
+    assert_eq!(after["hybrid"]["recall_at_5"], 1.0, "{after}");
+    // A file that is not there is an error.
+    let (ok, out) = eval(&question("  accept: [notes/missing.md]\n"));
+    assert!(!ok);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("notes/missing.md"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // A stale note is not a right answer.
+    write(
+        "facilities/axolotls.md",
+        "# Axolotls\n\nCleaned on Thursdays now.\n",
+    );
+    let (ok, out) = eval(&question("  accept: [notes/axolotls.md]\n"));
+    assert!(!ok);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("stale"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

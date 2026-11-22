@@ -15,4 +15,6 @@ run index
 run search --terms INV-2024-0042 --json | grep -q invoices.txt
 run search --about "Can I bring my dog to work?" --json | grep -q animals.md
 run stats | grep -q "indexed  2 files"
+printf '# Brain\n' > "$work/policies/BRAIN.md"
+run --repo "$work/policies" check | grep -q "0 failures"
 echo "smoke ok: $bin"

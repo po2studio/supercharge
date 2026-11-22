@@ -22,6 +22,7 @@
   question: "Can I do my job from a beach in Spain for a month?"
   terms: "beach OR Spain OR month OR job"
   expect: [policies/remote-work.md, icelandic/heimavinna.md]
+  accept: [notes/working-from-home.md]
   answer: "Not for a month: staying outside Iceland while on duty is capped at 20 days per calendar year, with at least two weeks notice to the People team."
 - id: login-length
   question: "How long does my login secret need to be?"
@@ -47,6 +48,7 @@
   question: "What is the most I can spend on a room when I go overseas?"
   terms: "room OR spend OR overseas"
   expect: [policies/travel-expenses.md]
+  accept: [notes/trip-limits.md]
   answer: "EUR 160 per night for lodging outside Iceland."
 - id: back-out
   question: "Until when can someone back out of their holiday without losing money?"

@@ -1,0 +1,73 @@
+# Written into the brain repo as .github/workflows/brain.yml by the `brain` skill (supercharge),
+# with @TAG@, @REPO@, @ASSET@ and @SHA256@ filled from the skill's brain.json. It checks the brain on
+# every push and pull request, and on the default branch keeps one open issue while notes are stale.
+# In CI the check sees only this repo's files: a note made from a file of another source is judged
+# by the ship step and `/brain refresh`.
+name: brain
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# One run at a time, so two pushes can't each open the stale-notes issue.
+concurrency:
+  group: brain
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `brain check` reads history to see that no accepted decision was edited.
+          fetch-depth: 0
+      - name: Download the pinned brain binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          gh release download @TAG@ --repo @REPO@ --pattern @ASSET@ --dir "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/bin"
+          echo "@SHA256@  @ASSET@" | sha256sum -c -
+          mv @ASSET@ brain
+          chmod +x brain
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: List the stale notes
+        run: brain check --json > "$RUNNER_TEMP/check.json" || true
+      - name: Keep one issue open while notes are stale
+        if: always() && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+        run: |
+          # A check that could not run says so in the last step; there is nothing to list.
+          jq -e . "$RUNNER_TEMP/check.json" > /dev/null || exit 0
+          stale=$(jq '.stale | length' "$RUNNER_TEMP/check.json")
+          open=$(gh issue list --state open --label brain-stale --json number --jq '.[].number')
+          keep=$(echo "$open" | head -n 1)
+          # Never more than one: close any other.
+          for n in $(echo "$open" | tail -n +2); do gh issue close "$n" --comment "Duplicate of #$keep."; done
+          if [ "$stale" -gt 0 ]; then
+            {
+              echo "These notes were made from files that changed or are gone:"
+              echo
+              jq -r '.stale[] | "- `\(.path)`: " + (if (.sources | length) == 0 then "it cites no source" else ([.sources[] | select(.state != "fresh") | "\(.path) \(.state)"] | join(", ")) end)' "$RUNNER_TEMP/check.json"
+              echo
+              echo "To refresh them, run \`/brain refresh\` in a project that lists this brain with \`update: true\`. This issue closes itself once no note is stale."
+            } > "$RUNNER_TEMP/body.md"
+            title="Stale notes: $stale"
+            if [ -n "$keep" ]; then
+              gh issue edit "$keep" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            else
+              gh label create brain-stale --description "Notes made from files that changed" --color FBCA04 || true
+              gh issue create --title "$title" --label brain-stale --body-file "$RUNNER_TEMP/body.md"
+            fi
+          elif [ -n "$keep" ]; then
+            gh issue close "$keep" --comment "No note is stale any more."
+          fi
+      - name: Check the brain
+        if: always()
+        run: brain check
