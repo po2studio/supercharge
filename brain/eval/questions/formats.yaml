@@ -1,0 +1,92 @@
+# Each answer exists only in a file of one format, so a question here also asks whether that
+# format is converted at all. `answer` is for people; the eval reads `expect`.
+- id: fmt-html
+  question: "Which firm tested the payment checkout for security holes, and what did it find?"
+  terms: "Brimvörn"
+  expect: [formats/vendor-security-review.html]
+  answer: "Brimvörn Security: three medium findings and no critical ones, all fixed by 8 November."
+- id: fmt-pdf
+  question: "How long did it take to move traffic to the backup site in the October exercise?"
+  terms: "switchover"
+  expect: [formats/regional-switchover-drill.pdf]
+  answer: "47 seconds, from Keflavik to Reykjavik, against a target of under 60."
+- id: fmt-docx
+  question: "What has to happen before a new tour operator can start taking bookings?"
+  terms: "\"test booking\""
+  expect: [formats/operator-onboarding-checklist.docx]
+  answer: "The signed data processing agreement is back and a EUR 1 test booking has been refunded."
+- id: fmt-xlsx
+  question: "Which region earned the most from bookings in the third quarter of 2024?"
+  terms: "Snæfellsnes OR Reykjanes"
+  expect: [formats/regional-sales-2024.xlsx]
+  answer: "Reykjanes, EUR 318,500 from 1,204 bookings."
+- id: fmt-pptx
+  question: "When does the pilot of the new operator dashboard start, and how many operators take part?"
+  terms: "\"Mission Control\""
+  expect: [formats/all-hands-2025-q1.pptx]
+  answer: "3 March, with 12 operators; general availability on 28 April."
+- id: fmt-pptx-notes
+  question: "Which operators are left out of the pilot, and why?"
+  terms: "pilot Westfjords"
+  expect: [formats/all-hands-2025-q1.pptx]
+  answer: "The Westfjords operators, until the ferry timetable feed is ready (speaker notes)."
+- id: fmt-odt
+  question: "Who has to sign off a refund of EUR 500 that is outside the normal window?"
+  terms: "refund approval"
+  expect: [formats/refund-exceptions.odt]
+  answer: "Two people in finance; one approver may sign off at most EUR 300."
+- id: fmt-ods
+  question: "Which vendor contract renews in September 2025, and how much notice does it need?"
+  terms: "\"Lindi Hosting\""
+  expect: [formats/vendor-contracts.ods]
+  answer: "Lindi Hosting, 60 days."
+- id: fmt-odp
+  question: "When do guests get a wallet for their vouchers?"
+  terms: "\"voucher wallet\""
+  expect: [formats/product-roadmap-2025.odp]
+  answer: "In the third quarter of 2025, after the payments rework."
+- id: fmt-rtf
+  question: "What happens to the cloud hosting contract if nobody does anything at the end of the year?"
+  terms: "Selkie"
+  expect: [formats/supplier-memo.rtf]
+  answer: "It renews automatically for twelve months unless cancelled ninety days before 31 December."
+- id: fmt-eml
+  question: "How many gluten-free lunches were ordered for the offsite, and where are they delivered?"
+  terms: "gluten"
+  expect: [formats/offsite-catering.eml]
+  answer: "18, to Gamla bíó at 11:30."
+- id: fmt-mbox
+  question: "Which app build fixed the crash on Android 12 when location was off?"
+  terms: "\"3.14.2\""
+  expect: [formats/support-escalations.mbox]
+  answer: "Build 3.14.2."
+- id: fmt-csv
+  question: "How much was expense claim EXP-9931 for, and who made it?"
+  terms: "\"EXP-9931\""
+  expect: [formats/expense-claims-2024-q4.csv]
+  answer: "ISK 184,500 for equipment, by Karítas Jónsdóttir."
+- id: fmt-tsv
+  question: "When does the afternoon ferry to Brjánslækur leave?"
+  terms: "Brjánslækur"
+  expect: [formats/ferry-timetable.tsv]
+  answer: "15:00 from Stykkishólmur, arriving 17:30 and stopping at Flatey."
+- id: fmt-json
+  question: "What share of users sees the instant quote widget?"
+  terms: "instant_quote_widget"
+  expect: [formats/feature-flags.json]
+  answer: "35 percent."
+- id: fmt-yaml
+  question: "How many days are chat transcripts kept before they are deleted?"
+  terms: "chat_transcripts"
+  expect: [formats/data-retention.yaml]
+  answer: "45 days."
+- id: fmt-code
+  question: "What is charged to a guest who turns up after ten in the evening unannounced?"
+  terms: "LATE_CHECKIN_FEE_ISK"
+  expect: [formats/late_checkin_fee.py]
+  answer: "ISK 4,900."
+- id: fmt-transcript
+  question: "What is the smallest group that is guaranteed a private airport vehicle?"
+  terms: "shuttle guaranteed"
+  expect: [formats/2025-03-10-operator-call.txt]
+  answer: "Six guests (Karítas, in the call with Fjallasýn)."

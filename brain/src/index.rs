@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -13,18 +13,15 @@ use std::{
 
 use crate::{
     chunk::{self, Params},
-    doc,
+    convert::{self, Format, Outcome},
+    dedup, doc,
     embed::Embedder,
     sources::{Kind, Source, PROJECT_FILES},
-    store::{self, NewChunk, NewFile, Store},
+    store::{self, FileRow, NewChunk, NewFile, Store},
 };
 
 /// Chunks embedded together; also how much work a crash can lose.
 const GROUP: usize = 128;
-
-/// Larger text files are reported, not indexed: they are logs and dumps, and the time to chunk
-/// and embed them grows with their size.
-pub const MAX_FILE_BYTES: u64 = 1 << 20;
 
 /// The most tokens the context header may take in what is embedded. With the 400-token chunks
 /// and the few tokens the model adds, header and text then always fit its 512.
@@ -32,71 +29,88 @@ const HEADER_TOKENS: usize = 96;
 /// A header is cut to this many characters before it is measured.
 const HEADER_CHARS: usize = 1000;
 
+/// A file with no text to index, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Unconverted {
+    /// The source's label, in the total of several sources' runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    pub path: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Report {
+    /// Files with text in the index.
     pub files: usize,
     pub chunks: usize,
     pub files_changed: usize,
     pub files_removed: usize,
     pub embedded_chunks: usize,
+    /// Files converted to text in this run: the files that changed, less those whose conversion
+    /// was cached.
+    pub converted: usize,
     /// Unchanged files whose date moved (a new commit date, say): the date is refreshed without
     /// embedding again.
     pub dates_refreshed: usize,
-    /// Files with an extension no converter exists for yet, by extension.
-    pub not_indexed: BTreeMap<String, usize>,
-    /// Text files left out, each with the reason: too large, or unreadable.
+    /// Files in the index that are a copy of a newer file, so only the newest ranks.
+    pub duplicates: usize,
+    /// Files that cannot be turned into text: scans, images, audio, video, encrypted and corrupt
+    /// files, and formats no converter reads.
+    pub unconverted: Vec<Unconverted>,
+    /// Files left out for being too large, or unreadable, each with the reason.
     pub skipped: Vec<String>,
     pub seconds: f64,
 }
 
 impl Report {
-    /// Adds another source's run to this total; `skipped` entries say which source they are from.
+    /// Adds another source's run to this total; entries say which source they are from.
     pub fn add(&mut self, label: &str, other: &Report) {
         self.files += other.files;
         self.chunks += other.chunks;
         self.files_changed += other.files_changed;
         self.files_removed += other.files_removed;
         self.embedded_chunks += other.embedded_chunks;
+        self.converted += other.converted;
         self.dates_refreshed += other.dates_refreshed;
+        self.duplicates += other.duplicates;
         self.seconds += other.seconds;
-        for (ext, n) in &other.not_indexed {
-            *self.not_indexed.entry(ext.clone()).or_insert(0) += n;
-        }
+        self.unconverted
+            .extend(other.unconverted.iter().map(|u| Unconverted {
+                source: Some(label.to_string()),
+                ..u.clone()
+            }));
         self.skipped
             .extend(other.skipped.iter().map(|s| format!("{label}: {s}")));
     }
 }
 
-/// A text file in the brain: the key it is stored under, and where it is.
+/// A file in a source: the key it is stored under, where it is, and what it is.
 #[derive(Debug, PartialEq)]
 pub struct Found {
     /// Relative path with `/` separators; a name that isn't UTF-8 is shown lossily.
     pub rel: String,
     pub path: PathBuf,
+    pub format: Format,
 }
 
 #[derive(Debug, Default)]
 pub struct Walk {
     /// Sorted by `rel`.
     pub files: Vec<Found>,
-    /// Files no converter exists for, counted by extension.
-    pub other: BTreeMap<String, usize>,
+    /// Files no converter can ever read, by what they are (images, audio, video, archives).
+    pub unconverted: Vec<Unconverted>,
     pub skipped: Vec<String>,
 }
 
-fn is_text(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_lowercase)
-            .as_deref(),
-        Some("md" | "markdown" | "txt" | "text")
-    )
+fn skipped_note(rel: &str, format: Format) -> String {
+    format!("{rel} (over {} MiB)", format.max_bytes() >> 20)
 }
 
-/// Finds the text files of a source, and counts the others by extension: all of an outside
-/// source, or a project's docs folder, `README.md` and `AGENTS.md`. Hidden names are skipped, and
-/// so are symlinks to folders and broken ones; a symlink to a file is read as that file.
+/// Finds the files of a source: all of an outside source, or a project's docs folder,
+/// `README.md` and `AGENTS.md`. Hidden names are skipped, and so are symlinks to folders and
+/// broken ones; a symlink to a file is read as that file. Files that are too large are left out
+/// unread, and those no converter can read are reported.
 pub fn walk(source: &Source) -> Result<Walk> {
     let root = source.root.as_path();
     let mut out = Walk::default();
@@ -115,8 +129,9 @@ pub fn walk(source: &Source) -> Result<Walk> {
                 if !meta.is_file() || out.files.iter().any(|f| f.rel == name) {
                     continue;
                 }
-                if meta.len() > MAX_FILE_BYTES {
-                    let note = format!("{name} (over {} MiB)", MAX_FILE_BYTES >> 20);
+                let format = Format::of(&path);
+                if meta.len() > format.max_bytes() {
+                    let note = skipped_note(name, format);
                     if !out.skipped.contains(&note) {
                         out.skipped.push(note);
                     }
@@ -124,12 +139,14 @@ pub fn walk(source: &Source) -> Result<Walk> {
                     out.files.push(Found {
                         rel: name.to_string(),
                         path,
+                        format,
                     });
                 }
             }
         }
     }
     out.files.sort_by(|a, b| a.rel.cmp(&b.rel));
+    out.unconverted.sort_by(|a, b| a.path.cmp(&b.path));
     out.skipped.sort();
     // Two names that differ only in bytes that aren't UTF-8 would share a key.
     let before = out.files.len();
@@ -176,16 +193,17 @@ fn walk_from(root: &Path, start: &Path, out: &mut Walk) -> Result<()> {
                 .map(|c| c.as_os_str().to_string_lossy())
                 .collect::<Vec<_>>()
                 .join("/");
-            if !is_text(&path) {
-                let ext = path
-                    .extension()
-                    .map_or("(none)".to_string(), |e| e.to_string_lossy().to_lowercase());
-                *out.other.entry(ext).or_insert(0) += 1;
-            } else if meta.is_some_and(|m| m.len() > MAX_FILE_BYTES) {
-                out.skipped
-                    .push(format!("{rel} (over {} MiB)", MAX_FILE_BYTES >> 20));
+            let format = Format::of(&path);
+            if let Format::Unconvertible(reason) = format {
+                out.unconverted.push(Unconverted {
+                    source: None,
+                    path: rel,
+                    reason: reason.to_string(),
+                });
+            } else if meta.is_some_and(|m| m.len() > format.max_bytes()) {
+                out.skipped.push(skipped_note(&rel, format));
             } else {
-                out.files.push(Found { rel, path });
+                out.files.push(Found { rel, path, format });
             }
         }
     }
@@ -262,34 +280,44 @@ pub fn index(
     let started = Instant::now();
     let Walk {
         files,
-        other: not_indexed,
+        mut unconverted,
         mut skipped,
     } = walk(source)?;
     let known = store.files()?;
+    let known_unconverted = store.unconverted()?;
     let on_disk: BTreeSet<&str> = files.iter().map(|f| f.rel.as_str()).collect();
-    let mut report = Report {
-        files: files.len(),
-        not_indexed,
-        ..Default::default()
-    };
+    let mut report = Report::default();
 
-    for path in known.keys().filter(|p| !on_disk.contains(p.as_str())) {
+    let gone = known
+        .keys()
+        .chain(known_unconverted.keys())
+        .filter(|p| !on_disk.contains(p.as_str()));
+    for path in gone {
         store.remove_file(path)?;
         report.files_removed += 1;
     }
 
     let git = git_dates(source);
     let params = Params::default();
+    let cache = store.dir.join("convert");
+    let mut cached_hashes: HashSet<String> = HashSet::new();
     let mut pending: Vec<Pending> = Vec::new();
     let mut queued = 0;
-    for (n, Found { rel, path: full }) in files.iter().enumerate() {
+    for (
+        n,
+        Found {
+            rel,
+            path: full,
+            format,
+        },
+    ) in files.iter().enumerate()
+    {
         let bytes = match fs::read(full) {
             Ok(b) => b,
             Err(e) => {
                 // Removed meanwhile, or not ours to read: leave it out, and the rest is indexed.
-                report.files -= 1;
                 skipped.push(format!("{rel} (cannot read: {e})"));
-                if known.contains_key(rel) {
+                if known.contains_key(rel) || known_unconverted.contains_key(rel) {
                     store.remove_file(rel)?;
                     report.files_removed += 1;
                 }
@@ -297,21 +325,38 @@ pub fn index(
             }
         };
         let hash = format!("{:x}", Sha256::digest(&bytes));
-        let text = String::from_utf8_lossy(&bytes);
-        let parsed = doc::parse(&text);
-        let date = parsed
-            .date
-            .clone()
-            .or_else(|| git.get(rel).cloned())
-            .unwrap_or_else(|| {
-                doc::date_of(
-                    fs::metadata(full)
-                        .and_then(|m| m.modified())
-                        .unwrap_or(std::time::UNIX_EPOCH),
-                )
-            });
-        if let Some((known_hash, known_date)) = known.get(rel) {
+        if let Some((known_hash, reason)) = known_unconverted.get(rel) {
             if *known_hash == hash {
+                unconverted.push(Unconverted {
+                    source: None,
+                    path: rel.clone(),
+                    reason: reason.clone(),
+                });
+                continue;
+            }
+        }
+        if format.cached() {
+            cached_hashes.insert(hash.clone());
+        }
+        let fallback_date = |own: Option<&String>| {
+            own.cloned()
+                .or_else(|| git.get(rel).cloned())
+                .unwrap_or_else(|| {
+                    doc::date_of(
+                        fs::metadata(full)
+                            .and_then(|m| m.modified())
+                            .unwrap_or(std::time::UNIX_EPOCH),
+                    )
+                })
+        };
+        if let Some(FileRow {
+            hash: known_hash,
+            date: known_date,
+            own_date,
+        }) = known.get(rel)
+        {
+            if *known_hash == hash {
+                let date = fallback_date(own_date.as_ref());
                 if *known_date != date {
                     store.refresh_date(rel, &date)?;
                     report.dates_refreshed += 1;
@@ -319,13 +364,47 @@ pub fn index(
                 continue;
             }
         }
-        let title = parsed.title.clone().unwrap_or_else(|| {
+        let converted = match format.cached().then(|| convert::cache_get(&cache, &hash)) {
+            Some(Some(c)) => c,
+            _ => {
+                report.converted += 1;
+                match convert::convert(*format, &bytes) {
+                    Outcome::Text(c) => {
+                        if format.cached() {
+                            convert::cache_put(&cache, &hash, &c);
+                        }
+                        c
+                    }
+                    Outcome::Unconverted(reason) => {
+                        store.put_unconverted(rel, &hash, &reason)?;
+                        if known.contains_key(rel) {
+                            report.files_changed += 1;
+                        }
+                        unconverted.push(Unconverted {
+                            source: None,
+                            path: rel.clone(),
+                            reason,
+                        });
+                        continue;
+                    }
+                }
+            }
+        };
+        let date = fallback_date(converted.date.as_ref());
+        let title = converted.title.clone().unwrap_or_else(|| {
             Path::new(rel)
                 .file_stem()
                 .map_or(rel.clone(), |s| s.to_string_lossy().into_owned())
         });
         let count = |s: &str| embedder.count_tokens(s);
-        let chunks = chunk::chunk(parsed.body, &count, &params);
+        let chunks = chunk::chunk(
+            &converted.text,
+            &count,
+            &Params {
+                headings: converted.prose,
+                ..params
+            },
+        );
         let mut texts = Vec::new();
         let new_chunks = chunks
             .into_iter()
@@ -348,12 +427,14 @@ pub fn index(
                 hash,
                 title,
                 date,
+                own_date: converted.date.clone(),
                 kind: if source.is_project() {
                     "raw"
                 } else {
                     doc::kind_of(rel)
                 }
                 .to_string(),
+                simhash: dedup::simhash(&converted.text),
                 chunks: new_chunks,
             },
             texts,
@@ -367,13 +448,25 @@ pub fn index(
         }
     }
     report.embedded_chunks += flush(store, embedder, &mut pending)?;
+    if store.dir.join("convert").is_dir() {
+        convert::cache_prune(&cache, &cached_hashes);
+    }
+
+    // Of files that are copies of each other only the newest ranks; dates may have moved.
+    let copies = dedup::copies(&store.dedup_items()?);
+    store.set_copies(&copies)?;
 
     skipped.sort();
+    unconverted.sort_by(|a, b| a.path.cmp(&b.path));
     report.skipped = skipped;
-    report.chunks = store.counts()?.1 as usize;
+    report.unconverted = unconverted;
+    (report.files, report.chunks) = {
+        let (f, c) = store.counts()?;
+        (f as usize, c as usize)
+    };
+    report.duplicates = store.duplicates()?;
     report.seconds = started.elapsed().as_secs_f64();
     store.set_meta("last_index", &serde_json::to_string(&report)?)?;
-    store.set_meta("not_indexed", &serde_json::to_string(&report.not_indexed)?)?;
     Ok(report)
 }
 
@@ -433,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn walk_finds_text_files_and_counts_the_rest_and_skips_hidden() {
+    fn walk_finds_every_file_that_might_hold_text_and_skips_hidden() {
         let (brain, _) = setup(&[
             ("a.md", "x"),
             ("sub/b.TXT", "x"),
@@ -444,11 +537,23 @@ mod tests {
             ("scan2.PDF", "x"),
             ("Makefile", "x"),
         ]);
-        let Walk { files, other, .. } = walk(&Source::outside("t", brain.path())).unwrap();
+        let Walk {
+            files, unconverted, ..
+        } = walk(&Source::outside("t", brain.path())).unwrap();
         let files: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
-        assert_eq!(files, ["a.md", "sub/b.TXT", "sub/deep/c.markdown"]);
-        assert_eq!(other["pdf"], 2);
-        assert_eq!(other["(none)"], 1);
+        // Every file that might hold text is found, whatever its extension, for the converters.
+        assert_eq!(
+            files,
+            [
+                "Makefile",
+                "a.md",
+                "scan.pdf",
+                "scan2.PDF",
+                "sub/b.TXT",
+                "sub/deep/c.markdown"
+            ]
+        );
+        assert!(unconverted.is_empty());
     }
 
     fn project(brain: &TempDir, docs: &str) -> Source {
@@ -494,7 +599,7 @@ mod tests {
             rels(&project(&dir, "handbook")),
             ["AGENTS.md", "README.md", "handbook/guide.md"]
         );
-        assert_eq!(walk(&project(&dir, "docs")).unwrap().other["png"], 1);
+        assert_eq!(walk(&project(&dir, "docs")).unwrap().unconverted.len(), 1);
         // The root as the docs folder reads each file once.
         assert_eq!(
             rels(&project(&dir, ""))
@@ -527,7 +632,7 @@ mod tests {
     fn an_oversized_readme_or_agents_md_is_reported_not_read() {
         let (dir, _) = setup(&[("AGENTS.md", "# Agents"), ("docs/a.md", "# A")]);
         let big = fs::File::create(dir.path().join("README.md")).unwrap();
-        big.set_len(MAX_FILE_BYTES + 1).unwrap();
+        big.set_len(convert::MAX_TEXT_BYTES + 1).unwrap();
         for docs in ["docs", ""] {
             let w = walk(&project(&dir, docs)).unwrap();
             let rels: Vec<&str> = w.files.iter().map(|f| f.rel.as_str()).collect();
@@ -553,7 +658,7 @@ mod tests {
         git(dir.path(), &old, &["commit", "-q", "-m", "one"]);
         let mut store = Store::create(&cache.path().join("index.sqlite"), dir.path()).unwrap();
         index(&project(&dir, "docs"), &mut store, &mut Fake, false).unwrap();
-        assert_eq!(store.files().unwrap()["README.md"].1, "2021-03-04");
+        assert_eq!(store.files().unwrap()["README.md"].date, "2021-03-04");
     }
 
     #[test]
@@ -702,7 +807,7 @@ mod tests {
         let store = Store::open(&cache.path().join("index.sqlite"))
             .unwrap()
             .unwrap();
-        assert_eq!(store.files().unwrap()["a.md"].1, doc::date_of(when));
+        assert_eq!(store.files().unwrap()["a.md"].date, doc::date_of(when));
         assert_eq!(
             run(&brain, &cache).dates_refreshed,
             0,
@@ -744,7 +849,7 @@ mod tests {
             let store = Store::open(&cache.path().join("index.sqlite"))
                 .unwrap()
                 .unwrap();
-            store.files().unwrap()["a.md"].1.clone()
+            store.files().unwrap()["a.md"].date.clone()
         };
         assert_eq!(date(&cache), "2020-01-02");
         let new = [("GIT_COMMITTER_DATE", "2024-06-07T12:00:00Z")];
@@ -795,7 +900,7 @@ mod tests {
         let (brain, cache) = setup(&[("small.md", "small")]);
         let big = brain.path().join("dump.txt");
         let f = fs::File::create(&big).unwrap();
-        f.set_len(MAX_FILE_BYTES + 1).unwrap();
+        f.set_len(convert::MAX_TEXT_BYTES + 1).unwrap();
         let r = run(&brain, &cache);
         assert_eq!((r.files, r.chunks), (1, 1));
         assert_eq!(r.skipped, ["dump.txt (over 1 MiB)"]);
@@ -841,5 +946,213 @@ mod tests {
         let r = run(&brain, &cache);
         assert_eq!(r.files, 4);
         assert!(r.chunks >= 3);
+    }
+
+    const DOCX: &[u8] = include_bytes!("../eval/corpus/formats/operator-onboarding-checklist.docx");
+    const SCAN: &[u8] = include_bytes!("../eval/corpus/formats/scanned-contract.pdf");
+    const PNG: &[u8] = include_bytes!("../eval/corpus/formats/office-photo.png");
+
+    fn put(brain: &TempDir, name: &str, bytes: &[u8]) {
+        let p = brain.path().join(name);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, bytes).unwrap();
+    }
+
+    #[test]
+    fn a_converted_file_is_converted_once_and_again_only_when_it_changes() {
+        let (brain, cache) = setup(&[("a.md", "# A\n\nplain")]);
+        put(&brain, "office/checklist.docx", DOCX);
+        let first = run(&brain, &cache);
+        assert_eq!((first.files, first.converted), (2, 2));
+        let second = run(&brain, &cache);
+        assert_eq!(
+            (
+                second.converted,
+                second.files_changed,
+                second.embedded_chunks
+            ),
+            (0, 0, 0)
+        );
+        // The document's own date is its date, and an unchanged file keeps it.
+        let store = Store::open(&cache.path().join("index.sqlite"))
+            .unwrap()
+            .unwrap();
+        let row = &store.files().unwrap()["office/checklist.docx"];
+        assert_eq!(row.date, "2024-10-02");
+        assert_eq!(row.own_date.as_deref(), Some("2024-10-02"));
+        // Rebuilding the index (another model, say) reads the conversion from the cache.
+        drop(store);
+        fs::remove_file(cache.path().join("index.sqlite")).unwrap();
+        let rebuilt = run(&brain, &cache);
+        assert_eq!(
+            (rebuilt.files, rebuilt.converted),
+            (2, 1),
+            "only the Markdown is converted again"
+        );
+        // A change converts the file again, and a file that is gone takes its cached conversion along.
+        put(&brain, "office/checklist.docx", &DOCX[..DOCX.len() - 3]);
+        assert_eq!(run(&brain, &cache).converted, 1);
+        fs::remove_file(brain.path().join("office/checklist.docx")).unwrap();
+        run(&brain, &cache);
+        let cached: Vec<_> = fs::read_dir(cache.path().join("convert"))
+            .unwrap()
+            .collect();
+        assert!(cached.is_empty(), "{cached:?}");
+    }
+
+    #[test]
+    fn files_that_cannot_be_converted_are_listed_with_why_and_not_tried_again() {
+        let (brain, cache) = setup(&[("a.md", "fine")]);
+        put(&brain, "scans/contract.pdf", SCAN);
+        put(&brain, "photo.PNG", PNG);
+        put(&brain, "broken.docx", b"PK\x03\x04 not a zip at all");
+        put(&brain, "blob.dat", &[0, 159, 146, 150, 0, 1, 2]);
+        let first = run(&brain, &cache);
+        assert_eq!((first.files, first.converted), (1, 4));
+        let listed: Vec<(&str, bool)> = first
+            .unconverted
+            .iter()
+            .map(|u| (u.path.as_str(), !u.reason.is_empty()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("blob.dat", true),
+                ("broken.docx", true),
+                ("photo.PNG", true),
+                ("scans/contract.pdf", true)
+            ]
+        );
+        let reason = |report: &Report, path: &str| {
+            report
+                .unconverted
+                .iter()
+                .find(|u| u.path == path)
+                .unwrap()
+                .reason
+                .clone()
+        };
+        assert!(reason(&first, "scans/contract.pdf").contains("no text layer"));
+        assert!(reason(&first, "photo.PNG").contains("image"));
+        let second = run(&brain, &cache);
+        assert_eq!(second.converted, 0, "nothing is tried again");
+        assert_eq!(
+            second.unconverted, first.unconverted,
+            "and everything is still listed"
+        );
+        // A file that becomes readable is indexed, and leaves the list.
+        put(&brain, "broken.docx", DOCX);
+        let third = run(&brain, &cache);
+        assert_eq!((third.files, third.unconverted.len()), (2, 3));
+        // And one that is deleted leaves it too.
+        fs::remove_file(brain.path().join("blob.dat")).unwrap();
+        assert_eq!(run(&brain, &cache).unconverted.len(), 2);
+    }
+
+    #[test]
+    fn copies_are_found_after_every_run_and_the_newest_stays() {
+        let policy = "Staff are entitled to twenty five days of paid leave each calendar year in addition to public holidays. \
+            Leave is agreed with the team lead at least two weeks ahead, and no more than ten working days may be taken in a row without \
+            approval from the head of department. Unused days carry over until the end of May the following year, after which they expire. \
+            Sick leave is recorded separately and does not reduce the annual entitlement.";
+        let (brain, cache) = setup(&[
+            (
+                "leave_v1.md",
+                &format!("---\ndate: 2023-01-10\n---\n{policy}"),
+            ),
+            (
+                "leave_final.md",
+                &format!(
+                    "---\ndate: 2024-02-02\n---\n{}",
+                    policy.replace("twenty five", "thirty")
+                ),
+            ),
+            (
+                "other.md",
+                "Completely unrelated text about the office plants.",
+            ),
+        ]);
+        assert_eq!(run(&brain, &cache).duplicates, 1);
+        let store = Store::open(&cache.path().join("index.sqlite"))
+            .unwrap()
+            .unwrap();
+        let hidden: Vec<(String, Option<String>)> = store
+            .conn
+            .prepare("SELECT path, dup_of FROM files ORDER BY path")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            hidden,
+            [
+                ("leave_final.md".into(), None),
+                ("leave_v1.md".into(), Some("leave_final.md".into())),
+                ("other.md".into(), None)
+            ]
+        );
+        drop(store);
+        // The older one becomes the newer: the roles swap on the next run, with nothing embedded again.
+        fs::write(
+            brain.path().join("leave_v1.md"),
+            format!("---\ndate: 2025-05-05\n---\n{policy}"),
+        )
+        .unwrap();
+        let r = run(&brain, &cache);
+        assert_eq!(r.duplicates, 1);
+        let store = Store::open(&cache.path().join("index.sqlite"))
+            .unwrap()
+            .unwrap();
+        let dup_of: Option<String> = store
+            .conn
+            .query_row(
+                "SELECT dup_of FROM files WHERE path = 'leave_final.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dup_of.as_deref(), Some("leave_v1.md"));
+        // A copy that is removed leaves nothing hidden.
+        drop(store);
+        fs::remove_file(brain.path().join("leave_v1.md")).unwrap();
+        assert_eq!(run(&brain, &cache).duplicates, 0);
+    }
+
+    #[test]
+    fn source_code_has_no_headings_and_a_table_is_cut_with_its_header() {
+        let mut csv = String::from("id,item\n");
+        for i in 0..400 {
+            csv.push_str(&format!("{i},widget number {i}\n"));
+        }
+        let (brain, cache) = setup(&[
+            ("script.py", "# not a heading\nprint(1)\n"),
+            ("stock.csv", &csv),
+        ]);
+        run(&brain, &cache);
+        let store = Store::open(&cache.path().join("index.sqlite"))
+            .unwrap()
+            .unwrap();
+        let headings: Vec<String> = store
+            .conn
+            .prepare("SELECT c.heading FROM chunks c JOIN files f ON f.id = c.file_id WHERE f.path = 'script.py'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(headings, [""]);
+        let groups: Vec<String> = store
+            .conn
+            .prepare("SELECT c.text FROM chunks c JOIN files f ON f.id = c.file_id WHERE f.path = 'stock.csv'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(groups.len() > 3, "{}", groups.len());
+        assert!(groups
+            .iter()
+            .all(|g| g.starts_with("| id | item |\n|---|---|\n| ")));
     }
 }

@@ -57,7 +57,7 @@ pub fn parse(text: &str) -> Parsed<'_> {
 }
 
 /// `YYYY-MM-DD` from the start of `s`, if it is one.
-fn valid_date(s: &str) -> Option<String> {
+pub fn valid_date(s: &str) -> Option<String> {
     let d = s.get(..10)?;
     let b = d.as_bytes();
     let ok = b.iter().enumerate().all(|(i, c)| {

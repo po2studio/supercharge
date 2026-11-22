@@ -226,14 +226,30 @@ fn nothing_is_written_into_the_brain() {
 }
 
 #[test]
-fn files_it_cannot_read_yet_are_counted_not_failed() {
+fn files_with_no_text_are_listed_not_failed() {
     let env = small_brain();
     env.write("scans/receipt.pdf", "%PDF-1.4 not really");
+    env.write("photos/office.png", "not a picture either");
     env.write(".git/config", "[core]");
     let index = env.json(&["index", "--json"]);
     assert_eq!(index["files"], 5);
+    let listed: Vec<&str> = index["unconverted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed, ["photos/office.png", "scans/receipt.pdf"]);
     let stats = env.json(&["stats", "--json"]);
-    assert_eq!(stats["sources"][0]["not_indexed"]["pdf"], 1);
+    assert_eq!(
+        stats["sources"][0]["last_index"]["unconverted"][1]["path"],
+        "scans/receipt.pdf"
+    );
+    let text = String::from_utf8_lossy(&env.cmd(&["stats"]).stdout).to_string();
+    assert!(
+        text.contains("not converted (2)") && text.contains("photos/office.png: image"),
+        "{text}"
+    );
 }
 
 #[test]

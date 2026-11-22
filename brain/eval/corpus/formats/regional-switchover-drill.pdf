@@ -1,0 +1,48 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Title (Regional switchover drill) /ModDate (D:20241010000000Z) >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<<  /Length 333 >>
+stream
+BT /F1 11 Tf 14 TL 56 780 Td (Regional switchover drill, 9 October 2024) Tj T* () Tj T* (Summary) Tj T* (On 9 October 2024 we moved all booking traffic from the Keflavik site to the) Tj T* (Reykjavik site in 47 seconds. No booking was lost and no guest saw an error page.) Tj T* (The target for the drill was under 60 seconds.) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<<  /Length 265 >>
+stream
+BT /F1 11 Tf 14 TL 56 780 Td (Findings) Tj T* (The payment webhooks needed 12 extra seconds to drain before the move.) Tj T* (The status page was updated by hand and should be automated before the next drill.) Tj T* (The next drill is planned for April 2025.) Tj ET
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000000309 00000 n 
+0000000435 00000 n 
+0000000820 00000 n 
+0000000946 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 4 0 R >>
+startxref
+1263
+%%EOF

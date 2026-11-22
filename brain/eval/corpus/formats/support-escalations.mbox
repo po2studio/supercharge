@@ -1,0 +1,27 @@
+From support@hrafn.example Mon, 03 Mar 2025 09:12:00 +0000
+From: support@hrafn.example
+To: mobile@hrafn.example
+Subject: Ticket 8840: slow search on tablets
+Date: Mon, 03 Mar 2025 09:12:00 +0000
+Message-ID: <esc-1@hrafn.example>
+
+Guests report that search takes several seconds on tablets with 2 GB of memory. Not reproduced yet.
+
+From mobile@hrafn.example Tue, 04 Mar 2025 15:40:00 +0000
+From: mobile@hrafn.example
+To: support@hrafn.example
+Subject: Ticket 8841: guide app crashes on Android 12
+Date: Tue, 04 Mar 2025 15:40:00 +0000
+Message-ID: <esc-2@hrafn.example>
+
+The guide app crashed on Android 12 whenever location was switched off. Fixed in build 3.14.2, which reaches all users by Friday.
+
+From support@hrafn.example Wed, 05 Mar 2025 11:05:00 +0000
+From: support@hrafn.example
+To: mobile@hrafn.example
+Subject: Ticket 8842: wrong currency on receipts
+Date: Wed, 05 Mar 2025 11:05:00 +0000
+Message-ID: <esc-3@hrafn.example>
+
+Receipts for Danish guests show ISK instead of DKK. Assigned to payments.
+

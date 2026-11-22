@@ -24,6 +24,9 @@ struct Question {
     question: String,
     terms: Option<String>,
     expect: Vec<String>,
+    /// Files that must not be among the top five: an older version of the answer, say.
+    #[serde(default)]
+    absent: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -123,7 +126,7 @@ pub fn measure(
         })
         .collect::<Result<_>>()?;
     for q in &questions {
-        for e in &q.expect {
+        for e in q.expect.iter().chain(&q.absent) {
             let (want_project, path) = match e.strip_prefix("project:") {
                 Some(p) => (true, p),
                 None => (false, e.as_str()),
@@ -180,10 +183,12 @@ pub fn measure(
                 latencies.push(t.elapsed().as_secs_f64() * 1000.0);
             }
             let rank_of = |p: &str| hits.iter().position(|h| is_expected(h, p));
+            // An answer that comes with a file it must not come with counts as a miss.
+            let blocked = q.absent.iter().any(|a| rank_of(a).is_some_and(|r| r < 5));
             let found = q
                 .expect
                 .iter()
-                .filter(|e| rank_of(e).is_some_and(|r| r < 5))
+                .filter(|e| !blocked && rank_of(e).is_some_and(|r| r < 5))
                 .count();
             sums[i].0 += found as f64 / q.expect.len() as f64;
             sums[i].1 += q
@@ -191,6 +196,7 @@ pub fn measure(
                 .iter()
                 .filter_map(|e| rank_of(e))
                 .min()
+                .filter(|_| !blocked)
                 .map_or(0.0, |r| 1.0 / (r as f64 + 1.0));
             ranks.push(
                 q.expect
