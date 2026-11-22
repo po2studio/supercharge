@@ -1,0 +1,11 @@
+# How long each kind of data is kept before the nightly job deletes it.
+retention:
+  chat_transcripts:
+    days: 45
+    reason: support quality review only
+  booking_records:
+    days: 2555   # seven years, the accounting rule
+  audio_recordings:
+    days: 0      # never stored
+notify:
+  owner: data protection officer

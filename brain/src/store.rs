@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{chunk, doc::Meta, embed, vecs};
+use crate::{chunk, dedup, doc::Meta, embed, vecs};
 
 const SCHEMA: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -26,7 +26,20 @@ CREATE TABLE files (
     status TEXT NOT NULL DEFAULT '',
     superseded_by TEXT NOT NULL DEFAULT '',
     amended_by TEXT NOT NULL DEFAULT '',
-    meta TEXT NOT NULL DEFAULT ''
+    meta TEXT NOT NULL DEFAULT '',
+    -- The date the document gives itself (frontmatter, or Office or email properties), if any.
+    own_date TEXT,
+    -- A fingerprint of the text for near-copies; none for a text too short to have one.
+    simhash INTEGER,
+    -- The path of the newest copy of this file, when a newer copy exists: this file is hidden.
+    dup_of TEXT
+);
+CREATE INDEX files_dup ON files(dup_of);
+-- Files that have no text to index, with why; kept by content hash so they are not tried again.
+CREATE TABLE unconverted (
+    path TEXT PRIMARY KEY,
+    hash TEXT NOT NULL,
+    reason TEXT NOT NULL
 );
 CREATE TABLE chunks (
     id INTEGER PRIMARY KEY,
@@ -45,6 +58,16 @@ CREATE VIRTUAL TABLE fts USING fts5(header, body, tokenize = 'unicode61 remove_d
 
 pub struct Store {
     pub conn: Connection,
+    /// The folder of the index file: the conversion cache lives beside it.
+    pub dir: PathBuf,
+}
+
+/// What the index holds about a file, to tell whether it changed.
+#[derive(Debug, PartialEq)]
+pub struct FileRow {
+    pub hash: String,
+    pub date: String,
+    pub own_date: Option<String>,
 }
 
 /// A chunk ready to be stored.
@@ -61,8 +84,10 @@ pub struct NewFile {
     pub hash: String,
     pub title: String,
     pub date: String,
+    pub own_date: Option<String>,
     pub kind: String,
     pub meta: Meta,
+    pub simhash: Option<u64>,
     pub chunks: Vec<NewChunk>,
 }
 
@@ -106,9 +131,11 @@ impl Store {
     /// Opens the index at `path`, creating it, or recreating it when it was built by a different
     /// model, binary version or chunker.
     pub fn create(path: &Path, root: &Path) -> Result<Store> {
-        std::fs::create_dir_all(path.parent().context("index path has no parent")?)?;
+        let dir = path.parent().context("index path has no parent")?;
+        std::fs::create_dir_all(dir)?;
         let mut store = Store {
             conn: connect(path)?,
+            dir: dir.to_path_buf(),
         };
         if !store.matches()? {
             drop(store);
@@ -119,6 +146,7 @@ impl Store {
             }
             store = Store {
                 conn: connect(path)?,
+                dir: dir.to_path_buf(),
             };
             store.conn.execute_batch(SCHEMA)?;
             for (k, v) in expected_meta() {
@@ -136,6 +164,7 @@ impl Store {
         }
         let store = Store {
             conn: connect(path)?,
+            dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
         };
         Ok(store.matches()?.then_some(store))
     }
@@ -172,11 +201,86 @@ impl Store {
         Ok(())
     }
 
-    /// path → (content hash, date) of every file in the index.
-    pub fn files(&self) -> Result<BTreeMap<String, (String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT path, hash, date FROM files")?;
+    /// What the index holds about each file in it, by path.
+    pub fn files(&self) -> Result<BTreeMap<String, FileRow>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, hash, date, own_date FROM files")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                FileRow {
+                    hash: r.get(1)?,
+                    date: r.get(2)?,
+                    own_date: r.get(3)?,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// path → (content hash, reason) of every file that has no text to index.
+    pub fn unconverted(&self) -> Result<BTreeMap<String, (String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, hash, reason FROM unconverted")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Notes that a file has no text to index, replacing whatever the index held for it.
+    pub fn put_unconverted(&mut self, path: &str, hash: &str, reason: &str) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        remove(&tx, path)?;
+        tx.execute(
+            "INSERT INTO unconverted(path, hash, reason) VALUES (?1, ?2, ?3)",
+            [path, hash, reason],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every indexed raw file as the duplicate grouping sees it. Decisions, notes and ADRs are
+    /// never copies of one another: what they say is tied to where they are and what they declare.
+    pub fn dedup_items(&self) -> Result<Vec<dedup::Item>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, hash, date, simhash FROM files WHERE kind = 'raw'")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(dedup::Item {
+                path: r.get(0)?,
+                hash: r.get(1)?,
+                date: r.get(2)?,
+                fingerprint: r.get::<_, Option<i64>>(3)?.map(|f| f as u64),
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Records which files are copies of a newer one: `(copy, newest)`. Replaces the earlier groups.
+    pub fn set_copies(&mut self, copies: &[(String, String)]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "UPDATE files SET dup_of = NULL WHERE dup_of IS NOT NULL",
+            [],
+        )?;
+        for (copy, newest) in copies {
+            tx.execute(
+                "UPDATE files SET dup_of = ?1 WHERE path = ?2",
+                [newest, copy],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// How many files are hidden behind a newer copy.
+    pub fn duplicates(&self) -> Result<usize> {
+        Ok(self.conn.query_row(
+            "SELECT count(*) FROM files WHERE dup_of IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as usize)
     }
 
     /// Sets a file's date, in the file and in every chunk's full-text header, without embedding
@@ -219,7 +323,7 @@ impl Store {
         for file in files {
             remove(&tx, &file.path)?;
             tx.execute(
-                "INSERT INTO files(path, hash, title, date, kind, project, status, superseded_by, amended_by, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO files(path, hash, title, date, kind, project, status, superseded_by, amended_by, meta, own_date, simhash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     file.path,
                     file.hash,
@@ -235,6 +339,8 @@ impl Store {
                     } else {
                         serde_json::to_string(&file.meta)?
                     },
+                    file.own_date,
+                    file.simhash.map(|f| f as i64),
                 ],
             )?;
             let file_id = tx.last_insert_rowid();
@@ -281,6 +387,7 @@ fn remove(tx: &rusqlite::Transaction, path: &str) -> Result<()> {
         [path],
     )?;
     tx.execute("DELETE FROM files WHERE path = ?1", [path])?;
+    tx.execute("DELETE FROM unconverted WHERE path = ?1", [path])?;
     Ok(())
 }
 
@@ -303,8 +410,10 @@ mod tests {
             hash: hash.into(),
             title: "T".into(),
             date: "2024-01-01".into(),
+            own_date: None,
             kind: "raw".into(),
             meta: Meta::default(),
+            simhash: None,
             chunks: texts
                 .iter()
                 .map(|t| {
@@ -333,7 +442,7 @@ mod tests {
         assert_eq!(s.counts().unwrap(), (2, 3));
         s.put_files(&[file("a.md", "h3", &["uno"])]).unwrap();
         assert_eq!(s.counts().unwrap(), (2, 2));
-        assert_eq!(s.files().unwrap()["a.md"].0, "h3");
+        assert_eq!(s.files().unwrap()["a.md"].hash, "h3");
         let fts: i64 = s
             .conn
             .query_row("SELECT count(*) FROM fts", [], |r| r.get(0))
@@ -366,7 +475,11 @@ mod tests {
         s.refresh_date("a.md", "2031-02-03").unwrap();
         assert_eq!(
             s.files().unwrap()["a.md"],
-            ("h1".into(), "2031-02-03".into())
+            FileRow {
+                hash: "h1".into(),
+                date: "2031-02-03".into(),
+                own_date: None
+            }
         );
         let matching = |q: &str| -> i64 {
             s.conn
@@ -422,5 +535,28 @@ mod tests {
         assert_ne!(a, b);
         assert!(a.starts_with("/tmp/sc-cache-test/index"));
         assert!(a.ends_with("index.sqlite"));
+    }
+
+    #[test]
+    fn a_file_is_either_indexed_or_unconverted_and_copies_are_recorded() {
+        let dir = TempDir::new().unwrap();
+        let mut s = Store::create(&dir.path().join("i/index.sqlite"), dir.path()).unwrap();
+        s.put_files(&[file("a.md", "h1", &["one"]), file("b.md", "h2", &["two"])])
+            .unwrap();
+        s.put_unconverted("a.md", "h3", "now a scan").unwrap();
+        assert_eq!(s.counts().unwrap(), (1, 1), "its text left the index");
+        assert_eq!(
+            s.unconverted().unwrap()["a.md"],
+            ("h3".into(), "now a scan".into())
+        );
+        s.put_files(&[file("a.md", "h4", &["uno"])]).unwrap();
+        assert!(s.unconverted().unwrap().is_empty(), "and back");
+        s.set_copies(&[("a.md".into(), "b.md".into())]).unwrap();
+        assert_eq!(s.duplicates().unwrap(), 1);
+        s.set_copies(&[]).unwrap();
+        assert_eq!(s.duplicates().unwrap(), 0);
+        s.put_unconverted("b.md", "h5", "x").unwrap();
+        s.remove_file("b.md").unwrap();
+        assert!(s.unconverted().unwrap().is_empty());
     }
 }

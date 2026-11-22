@@ -24,7 +24,8 @@ struct Question {
     question: String,
     terms: Option<String>,
     expect: Vec<String>,
-    /// Files that must not be among the top 5 hits: what a decision superseded, say.
+    /// Files that must not be among the top 5 hits: what a decision superseded, or an older version
+    /// of the answer.
     #[serde(default)]
     absent: Vec<String>,
 }

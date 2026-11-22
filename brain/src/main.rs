@@ -1,5 +1,7 @@
 mod chunk;
+mod convert;
 mod decisions;
+mod dedup;
 mod doc;
 mod embed;
 mod eval;
@@ -101,6 +103,10 @@ enum Command {
         #[arg(long)]
         details: bool,
     },
+    /// Converts the file on stdin of one format to JSON: how `index` keeps a damaged file's parser
+    /// from taking the indexer along. Limited in memory.
+    #[command(hide = true)]
+    ConvertChild { format: String },
     /// Writes the centre for the 1-bit codes (src/center.f32): the mean embedding of a corpus.
     #[command(hide = true)]
     Center { corpus: PathBuf, out: PathBuf },
@@ -152,7 +158,14 @@ struct Combined {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if let Command::ConvertChild { format } = &cli.command {
+        return convert::child(format);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        convert::isolate_with(exe);
+    }
     match &cli.command {
+        Command::ConvertChild { .. } => unreachable!("handled above"),
         Command::Index { json } => {
             let resolved = resolve(&cli)?;
             let mut embedder = embed::Onnx::load()?;
@@ -178,7 +191,25 @@ fn run() -> Result<()> {
                         "{}: {} files, {} chunks; {} files changed, {} removed, {} chunks embedded in {:.1}s",
                         n.source, r.files, r.chunks, r.files_changed, r.files_removed, r.embedded_chunks, r.seconds
                     );
+                    if r.duplicates > 0 {
+                        println!("  {} files are copies of a newer file", r.duplicates);
+                    }
                 }
+                print_unconverted(
+                    &combined
+                        .total
+                        .unconverted
+                        .iter()
+                        .map(|u| {
+                            format!(
+                                "{}: {}: {}",
+                                u.source.as_deref().unwrap_or(""),
+                                u.path,
+                                u.reason
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                );
                 print_skipped(&combined.total.skipped);
             }
         }
@@ -344,7 +375,7 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
             "index_bytes": std::fs::metadata(&path)?.len(),
             "files": f,
             "chunks": c,
-            "not_indexed": parse("not_indexed")?,
+            "duplicates": store.duplicates()?,
             "last_index": parse("last_index")?,
         }));
     }
@@ -365,6 +396,7 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
         env!("CARGO_PKG_VERSION")
     );
     let mut skipped: Vec<String> = Vec::new();
+    let mut unconverted: Vec<String> = Vec::new();
     for s in &sources {
         println!(
             "\n{}  {}",
@@ -394,10 +426,26 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
             last["embedded_chunks"],
             last["seconds"].as_f64().unwrap_or(0.0)
         );
-        if let Some(m) = s["not_indexed"].as_object().filter(|m| !m.is_empty()) {
-            let list: Vec<String> = m.iter().map(|(k, v)| format!("{v} .{k}")).collect();
-            println!("  not indexed (no converter yet): {}", list.join(", "));
+        if s["duplicates"].as_u64() > Some(0) {
+            println!(
+                "  {} files are copies of a newer file, and only the newest ranks",
+                s["duplicates"]
+            );
         }
+        let label = s["source"].as_str().unwrap_or("");
+        unconverted.extend(
+            last["unconverted"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|u| {
+                    format!(
+                        "{label}: {}: {}",
+                        u["path"].as_str().unwrap_or(""),
+                        u["reason"].as_str().unwrap_or("")
+                    )
+                }),
+        );
         skipped.extend(
             last["skipped"]
                 .as_array()
@@ -408,22 +456,33 @@ fn stats(resolved: &Resolved, json: bool) -> Result<()> {
         );
     }
     println!();
+    print_unconverted(&unconverted);
     print_skipped(&skipped);
     Ok(())
 }
 
-/// Text files the last run left out, with why: they are reported, never silently dropped.
-fn print_skipped(skipped: &[String]) {
-    if skipped.is_empty() {
+fn print_list(title: &str, entries: &[String]) {
+    if entries.is_empty() {
         return;
     }
-    println!("left out ({}):", skipped.len());
-    for s in skipped.iter().take(10) {
+    println!("{title} ({}):", entries.len());
+    for s in entries.iter().take(10) {
         println!("  {s}");
     }
-    if skipped.len() > 10 {
-        println!("  and {} more", skipped.len() - 10);
+    if entries.len() > 10 {
+        println!("  and {} more", entries.len() - 10);
     }
+}
+
+/// Files with no text to index (scans, images, audio, video, encrypted or corrupt files), with
+/// why: they are reported, never silently dropped.
+fn print_unconverted(entries: &[String]) {
+    print_list("not converted", entries);
+}
+
+/// Files the last run left out for size or because they could not be read, with why.
+fn print_skipped(skipped: &[String]) {
+    print_list("left out", skipped);
 }
 
 /// Mean embedding of every chunk in `corpus`, as little-endian f32.
@@ -433,10 +492,20 @@ fn center(corpus: &Path, out: &Path) -> Result<()> {
     let mut sum = vec![0f32; embed::DIM];
     let mut n = 0f32;
     for file in files {
-        let text = String::from_utf8_lossy(&std::fs::read(&file.path)?).into_owned();
-        let parsed = doc::parse(&text);
+        let convert::Outcome::Text(converted) =
+            convert::convert(file.format, &std::fs::read(&file.path)?)
+        else {
+            continue;
+        };
         let count = |s: &str| embedder.count_tokens(s);
-        let chunks = chunk::chunk(parsed.body, &count, &chunk::Params::default());
+        let chunks = chunk::chunk(
+            &converted.text,
+            &count,
+            &chunk::Params {
+                headings: converted.prose,
+                ..chunk::Params::default()
+            },
+        );
         let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
         for v in embedder.embed_passages(&texts)? {
             for (s, x) in sum.iter_mut().zip(v) {

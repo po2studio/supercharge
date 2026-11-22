@@ -284,7 +284,10 @@ pub fn search_filtered(
         let mut current = 0;
         let mut seen: std::collections::HashSet<(usize, String)> = Default::default();
         for ((n, id), score) in ranked {
-            let hit = chunk_hit(&sources[n], id, score)?;
+            // A file that has a newer copy never ranks: the copy does, and lists it.
+            let Some(hit) = chunk_hit(&sources[n], id, score)? else {
+                continue;
+            };
             // One hit per file of a source; the label is for people, so two sources are told
             // apart by position, not by name.
             if seen.insert((n, hit.path.clone())) {
@@ -519,14 +522,18 @@ fn vector(
     Ok(scored)
 }
 
-fn chunk_hit(source: &Opened, id: i64, score: f64) -> Result<Hit> {
-    let hit = source.store.conn.query_row(
-        "SELECT f.path, f.title, c.heading, f.date, f.kind, c.text, f.project, f.status, f.superseded_by, f.amended_by FROM chunks c JOIN files f ON f.id = c.file_id WHERE c.id = ?1",
+/// The hit for a chunk, or `None` when its file has a newer copy. The newest copy of a file lists
+/// the older ones in `versions`, newest first.
+fn chunk_hit(source: &Opened, id: i64, score: f64) -> Result<Option<Hit>> {
+    let (hidden, mut hit) = source.store.conn.query_row(
+        "SELECT f.path, f.title, c.heading, f.date, f.kind, c.text, f.project, f.status, f.superseded_by, f.amended_by, \
+         EXISTS(SELECT 1 FROM files n WHERE n.path = f.dup_of) \
+         FROM chunks c JOIN files f ON f.id = c.file_id WHERE c.id = ?1",
         [id],
         |r| {
             let path: String = r.get(0)?;
             let some = |s: String| (!s.is_empty()).then_some(s);
-            Ok(Hit {
+            Ok((r.get::<_, bool>(10)?, Hit {
                 id: format!("{}-{id}", source.tag),
                 source: source.label.clone(),
                 file: source.root.join(&path).to_string_lossy().into_owned(),
@@ -548,10 +555,20 @@ fn chunk_hit(source: &Opened, id: i64, score: f64) -> Result<Hit> {
                 score,
                 snippet: snippet(&r.get::<_, String>(5)?),
                 versions: Vec::new(),
-            })
+            }))
         },
     )?;
-    Ok(hit)
+    if hidden {
+        return Ok(None);
+    }
+    let mut stmt = source
+        .store
+        .conn
+        .prepare("SELECT path FROM files WHERE dup_of = ?1 ORDER BY date DESC, path DESC")?;
+    hit.versions = stmt
+        .query_map([&hit.path], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(Some(hit))
 }
 
 /// A file's first chunk as a hit, for a file that comes along with another; none if it isn't
@@ -566,7 +583,10 @@ fn file_hit(source: &Opened, path: &str, score: f64) -> Result<Option<Hit>> {
             |r| r.get(0),
         )
         .optional()?;
-    id.map(|id| chunk_hit(source, id, score)).transpose()
+    match id {
+        Some(id) => chunk_hit(source, id, score),
+        None => Ok(None),
+    }
 }
 
 /// Breaks `text` at spaces into lines of at most `width` characters (a longer word gets its own line).
@@ -734,7 +754,7 @@ mod tests {
         };
         // The long file's 80 chunks all rank above the others', and fill the first pool of 50.
         let first = fts(&s[0].store, &None, "banana", 50).unwrap();
-        let in_big = |id: i64| chunk_hit(&s[0], id, 0.0).unwrap().path == "big.md";
+        let in_big = |id: i64| chunk_hit(&s[0], id, 0.0).unwrap().unwrap().path == "big.md";
         assert!(first.iter().all(|(id, _)| in_big(*id)));
         let hits = search(&s, &mut Fake, &q, EXACT_LIMIT).unwrap();
         let mut found = paths(&hits);
@@ -1096,7 +1116,7 @@ mod tests {
                         "2023-01-01",
                         "product",
                         "status: superseded\n",
-                        "gizmo",
+                        &format!("gizmo {i}"),
                     ),
                 )
             })
@@ -1379,5 +1399,78 @@ mod tests {
             }
         )
         .is_empty());
+    }
+
+    #[test]
+    fn a_file_with_a_newer_copy_never_ranks_and_the_copy_lists_it() {
+        let policy = "Staff are entitled to twenty five days of paid leave each calendar year in addition to public holidays. \
+            Leave is agreed with the team lead at least two weeks ahead, and no more than ten working days may be taken in a row without \
+            approval from the head of department. Unused days carry over until the end of May the following year, after which they expire. \
+            Sick leave is recorded separately and does not reduce the annual entitlement.";
+        let (_dir, s) = brain(&[
+            (
+                "leave/v1.md",
+                &format!("---\ndate: 2023-01-10\n---\n{policy}"),
+            ),
+            (
+                "leave/v2.md",
+                &format!(
+                    "---\ndate: 2023-06-01\n---\n{}",
+                    policy.replace("twenty five", "thirty")
+                ),
+            ),
+            (
+                "leave/final.md",
+                &format!(
+                    "---\ndate: 2024-02-02\n---\n{}",
+                    policy
+                        .replace("twenty five", "thirty")
+                        .replace("May", "June")
+                ),
+            ),
+            (
+                "other.md",
+                "The office plants are watered on Fridays, and leave nothing to chance.",
+            ),
+        ]);
+        for q in [
+            Query {
+                terms: Some("leave"),
+                about: None,
+                k: 5,
+            },
+            Query {
+                terms: Some("leave"),
+                about: Some("how many days of leave"),
+                k: 5,
+            },
+        ] {
+            let hits = search(&s, &mut Fake, &q, EXACT_LIMIT).unwrap();
+            let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+            assert_eq!(
+                paths.iter().filter(|p| p.starts_with("leave/")).count(),
+                1,
+                "{paths:?}"
+            );
+            let newest = hits.iter().find(|h| h.path == "leave/final.md").unwrap();
+            assert_eq!(newest.versions, ["leave/v2.md", "leave/v1.md"]);
+            assert!(hits
+                .iter()
+                .filter(|h| h.path != "leave/final.md")
+                .all(|h| h.versions.is_empty()));
+        }
+        // Asking for more files than there are fills the list from the files that remain.
+        let hits = search(
+            &s,
+            &mut Fake,
+            &Query {
+                terms: Some("leave OR plants"),
+                about: None,
+                k: 10,
+            },
+            EXACT_LIMIT,
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 2);
     }
 }

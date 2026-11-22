@@ -133,6 +133,8 @@ mod tests {
             title: "T".into(),
             date: "2024-01-01".into(),
             kind: "decision".into(),
+            own_date: None,
+            simhash: None,
             meta,
             chunks: vec![crate::store::NewChunk {
                 heading: String::new(),
