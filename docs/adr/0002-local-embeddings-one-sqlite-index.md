@@ -13,6 +13,7 @@ Search has to find an answer that shares no words with the question, and an exac
 ## Alternatives
 
 - Embeddings over an API: ruled out by the owner.
+- EmbeddingGemma 2 (text only, 256 dimensions, Apache 2.0): measured on the full eval in [runs/2026-11-22-brain-model-choice.md](../../runs/2026-11-22-brain-model-choice.md). Hybrid recall@5 did not rise (0.917 to 0.911), indexing was about 7 times slower (a 1M-chunk shared-index build about 28 CI runs instead of 4) and the binary 2.2 times bigger; its int8 export needed a rewrite to run on ONNX Runtime 1.22.
 - A vector database or an ANN index (HNSW): a service or a graph to build and keep in memory, for a wall brute force already reaches.
 - The index inside the brain folder: a synced folder (Dropbox, Drive) would sync and corrupt it.
 
