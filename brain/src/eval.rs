@@ -8,7 +8,8 @@ use std::{fs, path::Path, time::Instant};
 use crate::{
     embed::Embedder,
     index,
-    search::{self, Query},
+    search::{self, Opened, Query},
+    sources::{self, Source},
     store::Store,
 };
 
@@ -34,6 +35,9 @@ pub struct Mode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Results {
     pub questions: usize,
+    /// Sources indexed: the project's docs and the outside corpus.
+    #[serde(default)]
+    pub sources: usize,
     pub files: usize,
     pub chunks: usize,
     pub terms: Mode,
@@ -79,26 +83,74 @@ fn p50(mut v: Vec<f64>) -> f64 {
     v.get(v.len() / 2).copied().unwrap_or(0.0)
 }
 
+/// Whether a hit is the file an `expect` entry names: `project:<path>` is a file of the project's
+/// docs, a bare path one of the outside corpus.
+fn is_expected(hit: &search::Hit, expect: &str) -> bool {
+    match expect.strip_prefix("project:") {
+        Some(path) => hit.source == sources::PROJECT && hit.path == path,
+        None => hit.source != sources::PROJECT && hit.path == expect,
+    }
+}
+
+/// Indexes the project's docs and the corpus as two sources, and searches across both.
 pub fn measure(
     corpus: &Path,
+    project: &Path,
     questions: &Path,
     embedder: &mut dyn Embedder,
     details: bool,
 ) -> Result<Results> {
     let questions = load_questions(questions)?;
-    let files = index::walk(corpus)?.files;
+    // Relative to where `eval` runs, not to the project the sources are resolved in.
+    let corpus = corpus
+        .canonicalize()
+        .with_context(|| format!("the corpus {} does not exist", corpus.display()))?;
+    let resolved = sources::resolve(
+        project,
+        &sources::Flags {
+            repo: Some(project.to_path_buf()),
+            sources: vec![corpus],
+        },
+    )?;
+    let live = resolved.live();
+    let walks: Vec<(&Source, Vec<String>)> = live
+        .iter()
+        .map(|s| {
+            Ok((
+                *s,
+                index::walk(s)?.files.into_iter().map(|f| f.rel).collect(),
+            ))
+        })
+        .collect::<Result<_>>()?;
     for q in &questions {
         for e in &q.expect {
-            if !files.iter().any(|f| &f.rel == e) {
+            let (want_project, path) = match e.strip_prefix("project:") {
+                Some(p) => (true, p),
+                None => (false, e.as_str()),
+            };
+            if !walks
+                .iter()
+                .any(|(s, rels)| s.is_project() == want_project && rels.iter().any(|r| r == path))
+            {
                 bail!("question {} expects {e}, which is not in the corpus", q.id);
             }
         }
     }
     let tmp = tempdir()?;
-    let mut store = Store::create(&tmp.join("index.sqlite"), corpus)?;
     let started = Instant::now();
-    let report = index::index(corpus, &mut store, embedder, false)?;
+    let (mut files, mut chunks, mut embedded) = (0, 0, 0);
+    let mut opened = Vec::new();
+    for (n, source) in live.iter().enumerate() {
+        let path = tmp.join(format!("{n}/index.sqlite"));
+        let mut store = Store::create(&path, &source.root)?;
+        let report = index::index(source, &mut store, embedder, false)?;
+        files += report.files;
+        chunks += report.chunks;
+        embedded += report.embedded_chunks;
+        opened.push(Opened::new(source, store));
+    }
     let secs = started.elapsed().as_secs_f64();
+    let report = (files, chunks, embedded);
 
     let (mut sums, mut latencies) = ([(0.0, 0.0); 3], Vec::new());
     for q in &questions {
@@ -123,11 +175,11 @@ pub fn measure(
         ];
         for (i, query) in modes.iter().enumerate() {
             let t = Instant::now();
-            let hits = search::search(&store, embedder, query, search::EXACT_LIMIT)?;
+            let hits = search::search(&opened, embedder, query, search::EXACT_LIMIT)?;
             if i == 2 {
                 latencies.push(t.elapsed().as_secs_f64() * 1000.0);
             }
-            let rank_of = |p: &str| hits.iter().position(|h| h.path == p);
+            let rank_of = |p: &str| hits.iter().position(|h| is_expected(h, p));
             let found = q
                 .expect
                 .iter()
@@ -163,13 +215,14 @@ pub fn measure(
     let _ = fs::remove_dir_all(&tmp);
     Ok(Results {
         questions: questions.len(),
-        files: report.files,
-        chunks: report.chunks,
+        sources: live.len(),
+        files: report.0,
+        chunks: report.1,
         terms: mode(0),
         about: mode(1),
         hybrid: mode(2),
         p50_ms: round(p50(latencies)),
-        chunks_per_s: round(report.embedded_chunks as f64 / secs.max(1e-9)),
+        chunks_per_s: round(report.2 as f64 / secs.max(1e-9)),
     })
 }
 
@@ -186,8 +239,8 @@ fn tempdir() -> Result<std::path::PathBuf> {
 pub fn render(r: &Results) -> String {
     let row = |name: &str, m: &Mode| format!("{name:<8} {:>9.3} {:>7.3}\n", m.recall_at_5, m.mrr);
     format!(
-        "{} questions over {} files, {} chunks\n{:<8} {:>9} {:>7}\n{}{}{}search p50 {:.0} ms, indexing {:.1} chunks/s\n",
-        r.questions, r.files, r.chunks, "", "recall@5", "MRR",
+        "{} questions over {} files, {} chunks, {} sources\n{:<8} {:>9} {:>7}\n{}{}{}search p50 {:.0} ms, indexing {:.1} chunks/s\n",
+        r.questions, r.files, r.chunks, r.sources, "", "recall@5", "MRR",
         row("terms", &r.terms), row("about", &r.about), row("hybrid", &r.hybrid),
         r.p50_ms, r.chunks_per_s
     )
@@ -234,6 +287,7 @@ pub fn regressions(now: &Results, base: &Results) -> Vec<String> {
 
 pub struct Opts<'a> {
     pub corpus: &'a Path,
+    pub project: &'a Path,
     pub questions: &'a Path,
     pub baseline: &'a Path,
     pub update_baseline: bool,
@@ -244,7 +298,7 @@ pub struct Opts<'a> {
 /// Prints the results; with `update_baseline` writes them as the new baseline, otherwise fails
 /// on any regression.
 pub fn run(o: &Opts, embedder: &mut dyn Embedder) -> Result<()> {
-    let now = measure(o.corpus, o.questions, embedder, o.details)?;
+    let now = measure(o.corpus, o.project, o.questions, embedder, o.details)?;
     if o.json {
         println!("{}", serde_json::to_string_pretty(&now)?);
     } else {

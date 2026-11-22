@@ -101,7 +101,16 @@ docs: docs                   # folder for the docs, ADRs and feature docs
 
 Missing keys take the defaults.
 
-One more key is optional and never part of the block `living-docs` writes: `brain:`, the path of this project's brain folder (absolute, `~/…`, or relative to the repo). It overrides the global path in `~/.config/supercharge/brain`, which `/brain` writes on first use. No skill asks for it as a missing key; with neither set there is no brain, and every skill behaves as it did before.
+One more key is optional and never part of the block `living-docs` writes: `brain:`, the outside folders the `brain` skill reads beside the project's docs, none by default. Each entry is a `path` (absolute, `~/…`, or relative to the repo) and an optional `update`:
+
+```yaml
+brain:
+  - path: ~/brains/client-a
+    update: true                # agents may write their own files here; at most one source
+  - path: ~/Dropbox/ClientA/Policies
+```
+
+`update` defaults to `false`: a source is only read. `/brain` never writes the key, and asked to add a source it tells you the lines to add. No skill asks for it as a missing key; a committed `brain:` should use paths every teammate has (`~/…` or relative). Without it the brain reads only the project's own docs, and without the `brain` skill every skill behaves as it did before.
 
 ### `risk`
 
@@ -176,22 +185,34 @@ To build an existing plan:
 | `adr` | Records a decision in `docs/adr/NNNN-*.md` |
 | `build-slice` | Builds one slice to done: tests, end-to-end check, review, PR, green CI, docs updated |
 | `drive-feature` | Runs `build-slice` across a feature's slices, ticks each on the feature issue as it merges, then reports once |
-| `brain` | Optional. Answers a question from a folder of your documents, with paths and dates, using one downloaded binary (172 MB) |
+| `brain` | Optional. Answers a question from the project's docs and the folders it lists, with paths and dates, using one downloaded binary (172 MB) |
 
 Each skill works on its own; `supercharge` and `drive-feature` start the others, and otherwise they coordinate only through the files above and their GitHub issues.
 Execution uses omp's built-in features (`task`, the `reviewer` agent, `browser`, the `github` tool), plus `gh` for issues, which the `github` tool can't create; in Claude Code it uses subagents, a headless browser and `gh`. If one is missing, the skill uses an equivalent, or stops and says so. No equivalent replaces a fresh subagent (not a fork) or a reviewer on a different model.
 
 ## Brain
 
-Optional. `/brain <question>` answers from a folder of your documents and says which files and dates it found the answer in, for example `/brain why did we add a second phone field to signup?`. It needs no API key and installs nothing but one binary. Indexing, embedding and search all run on your machine; the passages the agent reads to answer go to your model provider, like any file it reads.
+Optional. `/brain <question>` answers from your project's own docs and any folders you list as sources, and says which files and dates it found the answer in, for example `/brain why did we add a second phone field to signup?`. It needs no API key and installs nothing but one binary. Indexing, embedding and search all run on your machine; the passages the agent reads to answer go to your model provider, like any file it reads.
 
 - **Install:** `brain` comes with the bundle; leave it out at install and nothing else changes. Its first use downloads one binary (about 172 MB, from this repo's releases, sha256-checked, cached in `~/.cache/supercharge/brain/<version>/`) for Linux x64 or arm64 (glibc 2.34 or newer) or macOS arm64 or x64.
-- **Setup:** with nothing configured, the first `/brain` asks where the brain is (default `~/brain`; an existing folder of documents works as it is), shows the download size and the cache path, and waits for `go`. Then it downloads, checks the checksum (a mismatch aborts and runs nothing), creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` if they're missing, indexes the folder and answers. The path goes in `~/.config/supercharge/brain` (a project can override it with `brain:` in its `AGENTS.md`); nothing is written into any project, and no file in the brain is ever edited.
-- **Search:** the agent searches in a small-model subagent (so snippets stay out of your session), with full-text (`--terms`: an ID, a name, an error code) and by meaning (`--about`: a question that shares no words with its answer, in any language, Icelandic included), refines up to three times, and answers in at most 10 lines with paths and dates.
-- **Index:** one SQLite file per machine under `~/.cache/supercharge/index/`, never inside the brain, so a synced folder is safe. It embeds only files whose content changed; a first index runs at about 12 chunks a second on a laptop CPU.
+- **Sources:** installing the skill turns the brain on for the project you're in, with nothing to configure. The project is always a source, read in place and never written: its docs folder (the `docs` key), `README.md` and `AGENTS.md`. Outside folders are opt-in, listed per project under `brain:` in its `AGENTS.md` (see [Config](#config)), so an agency's clients stay in separate brains: a search covers only the current project and the sources it lists. A source can be any folder of documents, flat or nested, a synced folder included. Only a source with `update: true` is ever written (at most one per project), and only the files agents own there: `BRAIN.md`, `decisions/`, `notes/` and `projects/`; raw files are never edited.
+- **Setup:** the first `/brain` in a project shows the download size and the cache path, and waits for `go`. Then it downloads, checks the checksum (a mismatch aborts and runs nothing), indexes and answers. It never asks where your documents are and writes nothing into the project or any source, only under `~/.cache/supercharge/`. With an `update: true` source it also creates `BRAIN.md`, `decisions/`, `notes/` and `projects/` there if they're missing, and nothing else; two `update: true` sources stop it with a message naming both. Asked to add a source, it tells you the lines to add to `AGENTS.md` and leaves the edit to you.
+- **Search:** the agent searches in a small-model subagent (so snippets stay out of your session), with full-text (`--terms`: an ID, a name, an error code) and by meaning (`--about`: a question that shares no words with its answer, in any language, Icelandic included), refines up to three times, and answers in at most 10 lines with paths, the source and dates.
+- **Index:** one SQLite file per source under `~/.cache/supercharge/index/<source-hash>/`, never inside a project or a source, so a synced folder is safe; the project's docs count as one source, and projects that list the same source share its index. A search runs over the project's index and its sources', fused by rank. It embeds only files whose content changed; a first index runs at about 12 chunks a second on a laptop CPU.
 - **What it reads today:** markdown and plain text (`.md`, `.markdown`, `.txt`, `.text`). Other files are counted as not indexed in `brain stats`, and a text file over 1 MiB, or one it cannot read, is listed there as left out, never skipped silently.
 - **Measured:** on 49 golden questions an agent with the brain answered 47 right on both a 93-file and a 742-file corpus, against 45 and 44 for an agent with only `grep`; on the large corpus it used a quarter fewer tokens, and it was about a second slower per question ([the run](runs/2026-11-21-brain-vs-grep.md)).
-- **The binary alone:** `brain --root <folder> index`, `search --terms … --about … --json`, `stats` and `eval`. `brain eval` indexes the corpus in `brain/eval/` and prints recall@5, MRR, search latency and indexing speed for full-text only, meaning only, and both, against the committed baseline; CI fails on a regression.
+- **The binary alone:** after the first `/brain` it is at `~/.cache/supercharge/brain/<version>/brain` (put it on your `PATH`, or `gh release download brain-v<version> --repo po2studio/supercharge --pattern brain-linux-x64` for your platform). Run it inside a project, with no flags, and it resolves that project's sources itself:
+
+  ```sh
+  cd ~/code/my-project
+  brain index                                   # the project's docs, and the sources in AGENTS.md
+  brain search --about "why do we store money as integers"
+  brain search --terms "INV-2024-0042" --json   # one hit per file: source, path, file, date, snippet
+  brain stats                                   # the sources it sees, and what is indexed in each
+  brain init                                    # BRAIN.md, decisions/, notes/, projects/ in the update: true source
+  ```
+
+  `--repo <folder>` names the project from anywhere, and `--source <folder>` (repeat for several) reads those folders instead of the `brain:` list. Only `brain init` ever writes into a source, and only when you run it (the skill runs it for you). `brain eval` indexes the project in `brain/eval/project/` and the corpus in `brain/eval/corpus/` as two sources and prints recall@5, MRR, search latency and indexing speed for full-text only, meaning only, and both, against the committed baseline; CI fails on a regression.
 
 ## Models
 
