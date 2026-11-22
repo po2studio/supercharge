@@ -419,7 +419,8 @@ fn a_proposed_decision_may_still_change_until_it_is_accepted() {
     fx.commit("draft 2");
     fx.put(name, &decision("accepted", "Second draft.", ""));
     fx.commit("accepted");
-    assert!(fx.check(&[]).status.success());
+    let out = fx.check(&[]);
+    assert!(out.status.success(), "{}", text(&out));
     fx.put(name, &decision("accepted", "Third draft.", ""));
     assert!(!fx.check(&[]).status.success());
 }
@@ -621,4 +622,130 @@ fn nothing_is_written_by_check() {
     fx.check_in_project(&["--changed", "src/main.ts", "--project", "courier-app"]);
     assert_eq!(before, git(fx.brain.path(), &["status", "--porcelain"]));
     assert_eq!(fs::read_dir(fx.cache.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_range_includes_what_only_a_merge_changed_and_names_that_are_not_ascii() {
+    let fx = Fx::new();
+    let p = fx.project.path();
+    let first = git(p, &["rev-parse", "HEAD"]);
+    git(p, &["checkout", "-qb", "side"]);
+    fs::write(p.join("src/main.ts"), "side").unwrap();
+    git(p, &["commit", "-qam", "side"]);
+    git(p, &["checkout", "-q", "main"]);
+    fs::write(p.join("src/other.ts"), "main").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "main"]);
+    // A merge that also changes a file neither side touched.
+    git(p, &["merge", "--no-ff", "--no-commit", "-q", "side"]);
+    fs::create_dir_all(p.join("src/billing")).unwrap();
+    fs::write(p.join("src/billing/only-in-the-merge.ts"), "x").unwrap();
+    fs::write(p.join("src/á.ts"), "x").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "merge"]);
+    let v = json(&fx.check_in_project(&[
+        "--changed",
+        &format!("{first}..HEAD"),
+        "--project",
+        "courier-app",
+        "--json",
+    ]));
+    let changed: Vec<&str> = v["changed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert!(
+        changed.contains(&"src/billing/only-in-the-merge.ts"),
+        "{changed:?}"
+    );
+    assert!(changed.contains(&"src/á.ts"), "{changed:?}");
+    assert!(changed.contains(&"src/main.ts"), "{changed:?}");
+}
+
+#[test]
+fn an_empty_range_changed_nothing() {
+    let fx = Fx::new();
+    fx.put(
+        "decisions/2024-06-01-everything.md",
+        &decision("accepted", "Context.", "").replace("src/signup/**", "**"),
+    );
+    fx.commit("everything");
+    let v = json(&fx.check_in_project(&[
+        "--changed",
+        "HEAD..HEAD",
+        "--project",
+        "courier-app",
+        "--json",
+    ]));
+    assert_eq!(v["changed"].as_array().unwrap().len(), 0, "{v}");
+    assert_eq!(v["matches"].as_array().unwrap().len(), 0, "{v}");
+}
+
+#[test]
+fn link_targets_may_hold_spaces_in_angle_brackets_and_balanced_parentheses() {
+    let fx = Fx::new();
+    fx.put("policies/Travel Policy.md", "x");
+    fx.put("policies/Rules(2024).md", "x");
+    fx.put(
+        "decisions/2024-06-01-links.md",
+        &decision(
+            "accepted",
+            "See [a](<../policies/Travel Policy.md>), [b](../policies/Rules(2024).md) and [c](../policies/travel.md \"the policy\").",
+            "",
+        ),
+    );
+    let out = fx.check(&[]);
+    assert!(out.status.success(), "{}", text(&out));
+}
+
+#[test]
+fn a_note_of_another_project_citing_project_docs_is_not_judged_from_this_one() {
+    let fx = Fx::new();
+    fx.put(
+        "notes/from-billing.md",
+        &note(
+            "s",
+            &sha256("what billing's PRODUCT.md said"),
+            "project: billing\n",
+        )
+        .replace("path: policies/travel.md", "path: project:docs/PRODUCT.md"),
+    );
+    fs::create_dir_all(fx.project.path().join("docs")).unwrap();
+    fs::write(fx.project.path().join("docs/PRODUCT.md"), "this one's").unwrap();
+    let v = json(&fx.check_in_project(&["--project", "courier-app", "--json"]));
+    assert_eq!(v["stale"].as_array().unwrap().len(), 0, "{v}");
+    // The same note, with no project, is judged against this project's file.
+    fx.put(
+        "notes/from-billing.md",
+        &note("s", &sha256("what billing's PRODUCT.md said"), "")
+            .replace("path: policies/travel.md", "path: project:docs/PRODUCT.md"),
+    );
+    let v = json(&fx.check_in_project(&["--project", "courier-app", "--json"]));
+    assert_eq!(paths(&v["stale"]), ["notes/from-billing.md"], "{v}");
+}
+
+#[test]
+fn renaming_an_accepted_decision_does_not_reset_what_it_was_accepted_as() {
+    let fx = Fx::new();
+    let old = "decisions/2024-05-14-second-phone.md";
+    let new = "decisions/2024-05-14-second-phone-field.md";
+    git(fx.brain.path(), &["mv", old, new]);
+    fx.put(
+        new,
+        &decision(
+            "accepted",
+            "Context, decision, consequences. Rewritten.",
+            "",
+        ),
+    );
+    fx.commit("rename and rewrite");
+    let out = fx.check(&[]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert!(
+        text(&out).contains(&format!("FAIL {new}: accepted decision edited")),
+        "{}",
+        text(&out)
+    );
 }

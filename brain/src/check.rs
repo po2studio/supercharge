@@ -502,10 +502,8 @@ fn broken_links(file: &str, text: &str, brain: &Path) -> Vec<String> {
         let mut rest = prose.as_str();
         while let Some(at) = rest.find("](") {
             rest = &rest[at + 2..];
-            let Some(end) = rest.find(')') else { break };
-            let target = rest[..end].trim();
-            let target = target.split_whitespace().next().unwrap_or("");
-            let target = target.trim_start_matches('<').trim_end_matches('>');
+            let (target, used) = destination(rest);
+            rest = &rest[used.min(rest.len())..];
             let path = target.split(['#', '?']).next().unwrap_or("");
             let is_url = path.split_once(':').is_some_and(|(s, _)| {
                 !s.is_empty()
@@ -523,6 +521,41 @@ fn broken_links(file: &str, text: &str, brain: &Path) -> Vec<String> {
     }
     broken.dedup();
     broken
+}
+
+/// The link destination at the start of `s`, which follows `](`, and how much of `s` it took:
+/// `<…>` may hold spaces; otherwise it runs to the first space or the `)` that closes the link,
+/// with balanced parentheses and `\` escapes inside.
+fn destination(s: &str) -> (String, usize) {
+    let trimmed = s.trim_start();
+    let skipped = s.len() - trimmed.len();
+    if let Some(inner) = trimmed.strip_prefix('<') {
+        let end = inner.find('>').unwrap_or(inner.len());
+        return (inner[..end].to_string(), skipped + 1 + end);
+    }
+    let (mut out, mut depth, mut escaped) = (String::new(), 0, false);
+    for (i, c) in trimmed.char_indices() {
+        if escaped {
+            out.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '(' => {
+                depth += 1;
+                out.push(c);
+            }
+            ')' if depth == 0 => return (out, skipped + i),
+            ')' => {
+                depth -= 1;
+                out.push(c);
+            }
+            c if c.is_whitespace() => return (out, skipped + i),
+            c => out.push(c),
+        }
+    }
+    (out, s.len())
 }
 
 fn percent_decode(s: &str) -> String {
@@ -578,22 +611,71 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// The versions of `rel` (a path in the brain) in git history, oldest first, as commit and the
+/// file's path in the repo at that commit. A commit that renamed another file into it carries the
+/// history on under the old name (git's own rename detection, between files of that one commit:
+/// `log --follow` takes a new file for a copy of any similar one).
+fn history(brain: &Path, rel: &str) -> Option<Vec<(String, String)>> {
+    let top = git(brain, &["rev-parse", "--show-toplevel"])?;
+    let top = Path::new(top.trim());
+    let prefix = git(brain, &["rev-parse", "--show-prefix"])?;
+    let mut path = format!("{}{rel}", prefix.trim());
+    let mut rev = "HEAD".to_string();
+    let mut versions: Vec<(String, String)> = Vec::new();
+    // A decision is renamed once in a blue moon; the bound only stops a loop.
+    for _ in 0..20 {
+        let log = git(top, &["log", "--format=%H", &rev, "--", &path])?;
+        let Some(oldest) = log.lines().last() else {
+            break;
+        };
+        versions.extend(log.lines().map(|sha| (sha.to_string(), path.clone())));
+        let diff = git(
+            top,
+            &[
+                "-c",
+                "core.quotepath=off",
+                "diff-tree",
+                "--root",
+                "-r",
+                "-M",
+                "--name-status",
+                "--no-commit-id",
+                oldest,
+            ],
+        )?;
+        let from = diff.lines().find_map(|line| {
+            let mut f = line.split('\t');
+            f.next()?.starts_with('R').then_some(())?;
+            let old = f.next()?;
+            (f.next()? == path).then(|| old.to_string())
+        });
+        let Some(from) = from else { break };
+        rev = format!("{oldest}^");
+        path = from;
+    }
+    versions.reverse();
+    Some(versions)
+}
+
 /// What an accepted decision's file says now that it must not: its body, or a field other than
 /// `status` and `superseded-by`, compared with the first version in git history that was
 /// accepted. A brain that isn't a git repo, a decision with no history and one never accepted
 /// have nothing to compare.
 fn edited_since_accepted(brain: &Path, now: &Entry) -> Option<String> {
-    let shas = git(brain, &["log", "--format=%H", "--reverse", "--", &now.path])?;
-    let accepted = shas.lines().find_map(|sha| {
-        let text = git(brain, &["show", &format!("{sha}:./{}", now.path)])?;
-        let Front::Found(front, body) = split_front(&text) else {
-            return None;
-        };
-        let map = front_map(front)?;
-        let status = map.get("status").and_then(scalar)?;
-        matches!(status.as_str(), "accepted" | "superseded")
-            .then(|| (sha.to_string(), map, body.trim().to_string()))
-    });
+    let top = git(brain, &["rev-parse", "--show-toplevel"])?;
+    let top = Path::new(top.trim());
+    let accepted = history(brain, &now.path)?
+        .into_iter()
+        .find_map(|(sha, path)| {
+            let text = git(top, &["show", &format!("{sha}:{path}")])?;
+            let Front::Found(front, body) = split_front(&text) else {
+                return None;
+            };
+            let map = front_map(front)?;
+            let status = map.get("status").and_then(scalar)?;
+            matches!(status.as_str(), "accepted" | "superseded")
+                .then(|| (sha, map, body.trim().to_string()))
+        });
     let (sha, then, body) = accepted?;
     let may_change = |m: &Mapping| -> BTreeMap<String, Value> {
         m.iter()
@@ -651,10 +733,21 @@ fn stale(o: &Opts, note: &Entry, report: &mut Report) {
             .filter_map(|(label, root)| {
                 path.strip_prefix(label.as_str())
                     .and_then(|r| r.strip_prefix(':'))
-                    .map(|rel| (label.len(), root, rel))
+                    .map(|rel| (label.as_str(), root, rel))
             })
-            .max_by_key(|(len, ..)| *len);
+            .max_by_key(|(label, ..)| label.len());
+        // Two projects may cite `project:docs/PRODUCT.md` and mean different files.
+        let other_project = |label: &str| {
+            label == crate::sources::PROJECT
+                && note.str("project").is_some_and(|p| {
+                    o.project.as_ref().map(|c| c.name.as_str()) != Some(p.as_str())
+                })
+        };
         let (root, rel) = match labelled {
+            Some((label, ..)) if other_project(label) => {
+                report.unchecked += 1;
+                continue;
+            }
             Some((_, Some(root), rel)) => (root.as_path(), rel),
             // A listed folder this machine lacks, or a label nobody here lists.
             Some((_, None, _)) => {
@@ -773,13 +866,16 @@ fn dangling(entries: &[Entry], project: &Project, report: &mut Report) {
 /// argument that is a commit range (`abc123..HEAD`), every path any commit in it touched.
 fn changed_paths(args: &[String], project: &Path) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
-    if let [range] = args {
-        if range.contains("..") && !project.join(range).exists() {
+    match args {
+        [range] if range.contains("..") && !project.join(range).exists() => {
+            // `--cc` adds what a merge changed on its own; `-z` leaves odd names unquoted.
             let log = Command::new("git")
                 .arg("-C")
                 .arg(project)
                 .args([
                     "log",
+                    "--cc",
+                    "-z",
                     "--no-renames",
                     "--name-only",
                     "--format=",
@@ -795,18 +891,19 @@ fn changed_paths(args: &[String], project: &Path) -> Result<Vec<String>> {
                 );
             }
             out = String::from_utf8_lossy(&log.stdout)
-                .lines()
-                .filter(|l| !l.is_empty())
+                .split('\0')
+                .map(|p| p.trim_matches('\n'))
+                .filter(|p| !p.is_empty())
                 .map(str::to_string)
                 .collect();
         }
-    }
-    if out.is_empty() {
-        for a in args {
-            let p = Path::new(a);
-            let rel = p.strip_prefix(project).unwrap_or(p);
-            let rel = rel.strip_prefix("./").unwrap_or(rel);
-            out.push(rel.to_string_lossy().into_owned());
+        _ => {
+            for a in args {
+                let p = Path::new(a);
+                let rel = p.strip_prefix(project).unwrap_or(p);
+                let rel = rel.strip_prefix("./").unwrap_or(rel);
+                out.push(rel.to_string_lossy().into_owned());
+            }
         }
     }
     out.sort();
