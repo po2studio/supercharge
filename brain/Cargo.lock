@@ -133,6 +133,7 @@ dependencies = [
  "anyhow",
  "cc",
  "clap",
+ "libc",
  "ort",
  "rusqlite",
  "serde",
