@@ -1,20 +1,20 @@
 {
-  "questions": 62,
+  "questions": 83,
   "sources": 2,
-  "files": 111,
-  "chunks": 152,
+  "files": 133,
+  "chunks": 187,
   "terms": {
-    "recall_at_5": 0.675,
-    "mrr": 0.705
+    "recall_at_5": 0.757,
+    "mrr": 0.756
   },
   "about": {
-    "recall_at_5": 0.895,
-    "mrr": 0.841
+    "recall_at_5": 0.91,
+    "mrr": 0.867
   },
   "hybrid": {
-    "recall_at_5": 0.844,
-    "mrr": 0.796
+    "recall_at_5": 0.871,
+    "mrr": 0.82
   },
-  "p50_ms": 3.176,
-  "chunks_per_s": 42.6
+  "p50_ms": 7.664,
+  "chunks_per_s": 18.677
 }
