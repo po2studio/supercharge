@@ -20,7 +20,7 @@ Model IDs take the provider prefix omp needs: `anthropic/`, `openai-codex/` (a C
 
 ## In Claude Code
 
-There are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket is built on `sonnet` and reviewed by `opus`, whatever model the session runs on. That is the Anthropic stack. The cross-company reviewer is omp-only; if no such reviewer can be started, `build-slice` stops and says so.
+There are no model roles: the session runs on the model you pick (`/model`), builders on `sonnet`, and the reviewer on a different Claude model (`opus` for a `sonnet` builder, otherwise `sonnet`). So a ticket is built on `sonnet` and reviewed by `opus`, whatever model the session runs on. That is the Anthropic stack, with its roles fixed to those aliases (`sonnet`, `opus`, `haiku`) rather than the exact versions the README names. The cross-company reviewer is omp-only; if no such reviewer can be started, `build-slice` stops and says so.
 
 The `brain` skill's searches run in a small-model subagent: omp's `sonic` on `smol` (`scout` is read-only and can't run the binary), and in Claude Code a fresh subagent on `haiku`.
 
@@ -51,7 +51,7 @@ Claude Fable 5.2 (`anthropic/claude-fable-5-2`, $8 / $40) is a stronger planner 
 
 ## What the runs showed
 
-The write-ups in [`runs/`](../../runs/) tested earlier versions of these models. The stacks use the latest ones, which haven't had a run of their own. The frontier models qualify for every job without one: they're at least as strong as the models that passed.
+The write-ups in [`runs/`](../../runs/) tested earlier versions of these models. The stacks use the latest ones, and none of the six exact combinations has had a run of its own. The frontier models qualify for every job without one: they're at least as strong as the models that passed.
 
 - **Opus plans, GLM 5.3 builds, GPT-6.1 Sol or Kimi K3 reviews** worked, for about $6 for a small MVP ([run 6](../../runs/2026-10-15-receipt-scanner-opus-plans-glm-builds.md)). On a real 5-day project with Opus building, building was 70% of the cost ([the project](../../runs/2026-10-22-first-real-project.md)).
 - **Cheap models plan badly:** they fill business gaps with silent defaults and state unchecked facts. GLM 5.3 and Kimi K3 failed as planners. Kimi K2.7 Code couldn't drive the bundle at all ([run 4](../../runs/2026-10-14-receipt-scanner-cheap-models.md)).

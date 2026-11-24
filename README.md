@@ -12,11 +12,11 @@
 </div>
 
 ```text
-you     /supercharge the login page fails on an empty email
+you     /supercharge the settings title is cut off on narrow screens
 
 agent   One ticket. One question (default in brackets):
-        inline error, or disable the button? [inline error]
-        Plan: reject an empty email on submit, show "Enter your email", add a test.
+        wrap the title, or shorten it with an ellipsis? [wrap]
+        Plan: let the title wrap, add a test at 360px wide.
 
 you     go
 
@@ -62,7 +62,7 @@ flowchart LR
     E --> F["main"]
 ```
 
-Each slice is its own small PR with acceptance tests, a decision ledger and updated docs. Rigour scales with `risk`, and [`approve`](docs/guide/config.md) sets where you stop.
+Each slice is its own small PR with acceptance tests, a decision ledger and updated docs. Rigour scales with `risk`, and [`approve`](docs/guide/config.md) sets where you stop: by default you check the plan and say `go` to merge.
 
 ## Model stacks
 
@@ -129,11 +129,11 @@ modelRoles:
 
 Check with `omp config get modelRoles`. `openai-codex/` is the ChatGPT subscription; with an API key use `openai/`.
 
-Claude Code has no model roles: it runs the Anthropic stack. Prices, evidence and when to swap in GLM-5.4: [models guide](docs/guide/models.md).
+Claude Code has no model roles: it runs the Anthropic stack, on `sonnet`, `opus` and `haiku`, with the session on the model you pick. Prices, evidence and when to swap in GLM-5.4: [models guide](docs/guide/models.md).
 
 ## The brain
 
-Optional. `/brain <question>` answers from your project's docs and any folders you list, citing the files and dates it found the answer in. Everything is indexed and searched on your machine; no API key. It downloads one binary (176 MB) the first time, after you say `go`. With `update: true` on a source, agents also keep those documents true after each merge. See the [brain guide](docs/guide/brain.md).
+Optional. `/brain <question>` answers from your project's docs and any folders you list, citing the files and dates it found the answer in. Everything is indexed and searched on your machine; no API key. It downloads one binary (176 MB) the first time, after you say `go`. With `update: true` on a source, agents also keep those documents true after each merge into `main`. See the [brain guide](docs/guide/brain.md).
 
 ## More docs
 
