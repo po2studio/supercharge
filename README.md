@@ -30,7 +30,7 @@ you     go
 
 Five skills that take a request from one line to merged, tested code. You answer one batch of questions, check the plan, and say `go` at the end. The agent writes the tests, builds, runs it for real, has a different model review it, and keeps the docs true.
 
-It guides how the agent works, not how it does the work, so it assumes a strong model. Every line should change behaviour; you can read all of it in one sitting.
+It guides how the agent works, not how it does the work, so it assumes a strong model. You can read all of it in one sitting.
 
 ## Install
 
@@ -55,14 +55,14 @@ Every stop tells you what to check and what to reply. You never merge anything y
 
 ```mermaid
 flowchart LR
-    A["Your request"] --> B["Plan<br>questions, your check"]
-    B --> C["Build<br>tests first, run for real,<br>reviewed by another model"]
+    A["Your request"] --> B["Plan<br>questions,<br>your check"]
+    B --> C["Build<br>tests first,<br>run for real,<br>another model reviews"]
     C --> D["PR<br>CI green"]
     D --> E["Your go"]
     E --> F["main"]
 ```
 
-Each slice is its own small PR with acceptance tests, a decision ledger and updated docs. Features are built in parallel, one subagent per slice. Rigour scales with `risk`, and [`approve`](docs/guide/config.md) sets where you stop.
+Each slice is its own small PR with acceptance tests, a decision ledger and updated docs. Rigour scales with `risk`, and [`approve`](docs/guide/config.md) sets where you stop.
 
 ## Model stacks
 
@@ -76,16 +76,60 @@ modelRoles:
   smol: anthropic/claude-haiku-5-5        # searches, titles
 ```
 
-| Stack | `default` | `task` | `slow` | `smol` |
+| Stack | `default` plans | `task` builds | `slow` reviews | `smol` small jobs |
 |---|---|---|---|---|
-| **Mixed** (default) | `anthropic/claude-opus-5-5` | `anthropic/claude-sonnet-5-5` | `openai-codex/gpt-6.2-sol` | `anthropic/claude-haiku-5-5` |
-| **Anthropic** | `anthropic/claude-opus-5-5` | `anthropic/claude-sonnet-5-5` | `anthropic/claude-opus-5-5` | `anthropic/claude-haiku-5-5` |
-| **OpenAI** | `openai-codex/gpt-6.2-astra` | `openai-codex/gpt-6.2-sol` | `openai-codex/gpt-6.2-astra` | `openai-codex/gpt-6-luna` |
-| **Google** | `google/gemini-4-carbon` | `google/gemini-4-neon` | `google/gemini-4-carbon` | `google/gemini-4-hydrogen` |
-| **Meta** | `openrouter/meta/muse-wonder` | `openrouter/meta/muse-spark-1.3` | `openrouter/meta/muse-wonder` | `openrouter/meta/muse-ember` |
-| **Alternatives**, on OpenRouter | `openrouter/moonshotai/kimi-k3.1-pro` | `openrouter/z-ai/glm-5.3` | `openrouter/qwen/qwen4-max` | `openrouter/deepseek/deepseek-v4.1-flash` |
+| **Mixed** (default) | Claude Opus 5.5 | Claude Sonnet 5.5 | GPT-6.2 Sol | Claude Haiku 5.5 |
+| **Anthropic** | Claude Opus 5.5 | Claude Sonnet 5.5 | Claude Opus 5.5 | Claude Haiku 5.5 |
+| **OpenAI** | GPT-6.2 Astra | GPT-6.2 Sol | GPT-6.2 Astra | GPT-6 Luna |
+| **Google** | Gemini 4 Carbon | Gemini 4 Neon | Gemini 4 Carbon | Gemini 4 Hydrogen |
+| **Meta** | Muse Wonder | Muse Spark 1.3 | Muse Wonder | Muse Ember |
+| **Alternatives**, on OpenRouter | Kimi K3.1 Pro | GLM-5.3 | Qwen4-Max | DeepSeek V4.1 Flash |
 
-`openai-codex/` is the ChatGPT subscription; with an API key use `openai/`. Check with `omp config get modelRoles`. Claude Code has no model roles: it runs the Anthropic stack, with builders on `sonnet` and the reviewer on `opus`. Prices, evidence and when to swap in GLM-5.4: [models guide](docs/guide/models.md).
+<details>
+<summary>The other five stacks, as config</summary>
+
+```yaml
+# Anthropic
+modelRoles:
+  default: anthropic/claude-opus-5-5
+  task: anthropic/claude-sonnet-5-5
+  slow: anthropic/claude-opus-5-5
+  smol: anthropic/claude-haiku-5-5
+
+# OpenAI
+modelRoles:
+  default: openai-codex/gpt-6.2-astra
+  task: openai-codex/gpt-6.2-sol
+  slow: openai-codex/gpt-6.2-astra
+  smol: openai-codex/gpt-6-luna
+
+# Google
+modelRoles:
+  default: google/gemini-4-carbon
+  task: google/gemini-4-neon
+  slow: google/gemini-4-carbon
+  smol: google/gemini-4-hydrogen
+
+# Meta
+modelRoles:
+  default: openrouter/meta/muse-wonder
+  task: openrouter/meta/muse-spark-1.3
+  slow: openrouter/meta/muse-wonder
+  smol: openrouter/meta/muse-ember
+
+# Alternatives, on OpenRouter
+modelRoles:
+  default: openrouter/moonshotai/kimi-k3.1-pro
+  task: openrouter/z-ai/glm-5.3
+  slow: openrouter/qwen/qwen4-max
+  smol: openrouter/deepseek/deepseek-v4.1-flash
+```
+
+</details>
+
+Check with `omp config get modelRoles`. `openai-codex/` is the ChatGPT subscription; with an API key use `openai/`.
+
+Claude Code has no model roles: it runs the Anthropic stack. Prices, evidence and when to swap in GLM-5.4: [models guide](docs/guide/models.md).
 
 ## The brain
 
