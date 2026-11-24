@@ -100,7 +100,7 @@ REMOVED = (
     "--changed", "BRAIN.md", "`touches`", "/brain refresh", "ship step", "brain-stale",
 )
 today = [root / "README.md", root / "AGENTS.md", root / "docs/PRODUCT.md", root / "docs/ARCHITECTURE.md"]
-today += sorted(root.glob("skills/**/*.md")) + sorted(root.glob("skills/brain/*.yml"))
+today += sorted(root.glob("docs/guide/*.md")) + sorted(root.glob("skills/**/*.md")) + sorted(root.glob("skills/brain/*.yml"))
 for doc in today:
     if doc.exists():
         for word in REMOVED:

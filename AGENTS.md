@@ -1,10 +1,11 @@
 # AGENTS.md
 
-Supercharge is a skill bundle for omp and Claude Code. The skills are `skills/*/SKILL.md` (`skills/supercharge/` also holds `issue-template.md`, the default issue format, which a project's own `docs/issue-template.md` replaces; `skills/brain/` holds `brain.json`, the pins of its binary, and `brain-ci.yml`, the workflow it writes into a GitHub brain repo); `brain/` is the Rust source of that binary, the one piece of code, released from this repo; `README.md` is the user-facing doc; `runs/` holds write-ups of real runs. A feature is one GitHub issue whose slice checklist is its progress record; features planned earlier with sub-issues still build (see the Issues rule in PRODUCT).
+Supercharge is a skill bundle for omp and Claude Code. The skills are `skills/*/SKILL.md` (`skills/supercharge/` also holds `issue-template.md`, the default issue format, which a project's own `docs/issue-template.md` replaces; `skills/brain/` holds `brain.json`, the pins of its binary, and `brain-ci.yml`, the workflow it writes into a GitHub brain repo); `brain/` is the Rust source of that binary, the one piece of code, released from this repo; `README.md` is the short intro for users and `docs/guide/` holds the detail they still need; `runs/` holds write-ups of real runs. A feature is one GitHub issue whose slice checklist is its progress record; features planned earlier with sub-issues still build (see the Issues rule in PRODUCT).
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): what the bundle does, its core flows and rules
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it's built and distributed
 - `docs/features/`: feature docs; `docs/adr/`: decisions
+- `docs/guide/`: the user guide: `usage.md`, `config.md`, `models.md`, `brain.md`
 
 ## Checks
 
@@ -15,11 +16,11 @@ For `brain/` (CI runs these when `brain/` changes; the first build needs `curl` 
 ## Conventions
 
 - Every line in a skill should change behaviour. Keep additions short and in the skills' existing voice: guide how the agent works, not how it does the work.
-- The README describes the skills' behaviour in detail (the `approve` table, Usage): a skill change that alters what the human does or sees updates it too.
+- The README is a short intro, at most 900 words, with the six model stacks; keep it that way and put detail in `docs/guide/`. The guide describes the skills' behaviour in detail (the `approve` table in `config.md`, `usage.md`): a skill change that alters what the human does or sees updates it, and the README only where it would now be untrue. A model change updates the README's stacks and `docs/guide/models.md`.
 - No smoke run and no end-to-end test for skill changes (owner's decision, 2026-10-29): skill text has no runtime. Verification is the independent review of the diff against the acceptance criteria; the next real run confirms the behaviour.
 - A real run gets a write-up in `runs/YYYY-MM-DD-slug.md`: setup, result, what went wrong, changes made afterwards.
 - The `brain/` crate is real code: test first, and a change to what's indexed or how it ranks adds cases to `brain/eval/questions/` and puts the before and after of `brain eval` in the PR. `brain eval` reads two sources: the outside corpus `brain/eval/corpus/` and a small project in `brain/eval/project/` (its docs, `README.md` and `AGENTS.md`); a question's `expect` names a project file as `project:<path>`, its optional `absent` names files that must not be among the top 5 hits (an older version of the answer), which fails the eval outright, and its optional `after` names files that may come back but only after the first `expect` file (an ADR a later one superseded). Questions are plain questions, asked as an agent asks them: there are no hand-picked search terms. The eval reports the full-text half alone, the by-meaning half alone and the two fused, and fails when the fused search finds fewer answers than the better half. `brain/scripts/make-eval-formats.py` writes the corpus's binary files (`formats/`, `duplicates/`); rerun it, don't edit them. `brain eval --update-baseline` rewrites `brain/eval/baseline.json`; only do that for a change you can explain. Eval corpus and project files pass `scripts/check.py` like any Markdown, so no broken relative links.
-- To release the binary, push a tag `brain-vX.Y.Z`: `.github/workflows/brain-release.yml` builds the four platforms and publishes a pre-release. Then pin its URLs, sizes and sha256 in `skills/brain/brain.json`, and update the size in the `brain` skill's description and the README.
+- To release the binary, push a tag `brain-vX.Y.Z`: `.github/workflows/brain-release.yml` builds the four platforms and publishes a pre-release. Then pin its URLs, sizes and sha256 in `skills/brain/brain.json`, and update the size in the `brain` skill's description, the README and `docs/guide/brain.md`.
 
 ## Supercharge
 

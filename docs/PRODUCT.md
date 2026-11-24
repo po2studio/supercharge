@@ -1,6 +1,6 @@
 # Product
 
-Supercharge is a skill bundle for [omp](https://github.com/can1357/oh-my-pi) and [Claude Code](https://code.claude.com): five skills that take a request from one line to merged, tested code, and an optional sixth, `brain`, that answers questions from a project's docs and the folders it lists. The human answers one batch of questions and checks the plan at the start, and replies `go` at the end. The [README](../README.md) is the user-facing doc; this is the short version agents work from.
+Supercharge is a skill bundle for [omp](https://github.com/can1357/oh-my-pi) and [Claude Code](https://code.claude.com): five skills that take a request from one line to merged, tested code, and an optional sixth, `brain`, that answers questions from a project's docs and the folders it lists. The human answers one batch of questions and checks the plan at the start, and replies `go` at the end. The [README](../README.md) is the short intro, with the [guide](guide/usage.md) behind it for what a user still needs; this is the short version agents work from.
 
 ## Users
 
@@ -21,7 +21,7 @@ Flows 1 to 3 have no automated end-to-end test: skill text has no runtime. A rea
 
 ## Rules
 
-- **Config:** `risk`, `approve`, `ci_budget` and `docs`, in the `## Supercharge` block of a project's `AGENTS.md`. A missing key is asked for with the next request's questions, and takes its default until answered. See [Config](../README.md#config). The optional `brain:` key (a list of outside folders to read beside the project's docs, each with an optional `update: true`) is never asked for as missing, and no skill writes it: `/brain` says which lines to add.
+- **Config:** `risk`, `approve`, `ci_budget` and `docs`, in the `## Supercharge` block of a project's `AGENTS.md`. A missing key is asked for with the next request's questions, and takes its default until answered. See [Config](guide/config.md). The optional `brain:` key (a list of outside folders to read beside the project's docs, each with an optional `update: true`) is never asked for as missing, and no skill writes it: `/brain` says which lines to add.
 - **The human acts only at the `approve` steps**, by replying `go`. The agent merges; the human never does.
 - **Ask about the business, decide the technical.** Business questions are asked in one batch, each with a default, as far as `risk` says; the one exception is a brainstorm, a back-and-forth until the human settles the direction; anything not asked is recorded as an assumption. A commitment outside the codebase is a `proposed` ADR the human accepts.
 - **What the human wrote or approved is binding.** Conflicts are flagged, not silently resolved.
